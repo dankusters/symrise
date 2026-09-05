@@ -148,24 +148,31 @@ def compute_variations(
 ) -> dict[str, dict[str, list[float | None]]]:
     """Para cada categoria, a variacao percentual do valor e (se
     `additive`) a variacao de participacao (MS, em pontos percentuais)
-    entre cada par de anos consecutivos - usado pela tabela de variacoes
-    do app (`{categoria: {"pct": [...], "share_pp": [...]}}`, uma entrada
-    por transicao de ano)."""
+    entre cada par de anos consecutivos, junto com o valor nominal do
+    indicador e da participacao (MS) no ano final de cada transicao -
+    usado pela tabela de variacoes do app (`{categoria: {"pct": [...],
+    "share_pp": [...], "nominal": [...], "share_value": [...]}}`, uma
+    entrada por transicao de ano)."""
     totals = {yr: sum(values[cat][yr] for cat in categories) for yr in years} if additive else {}
     result: dict[str, dict[str, list[float | None]]] = {}
     for cat in categories:
         pct: list[float | None] = []
         share_pp: list[float | None] = []
+        nominal: list[float | None] = []
+        share_value: list[float | None] = []
         for i in range(len(years) - 1):
             yr0, yr1 = years[i], years[i + 1]
             pct.append(pct_change(values[cat][yr0], values[cat][yr1]))
+            nominal.append(values[cat][yr1])
             if additive and totals[yr0] and totals[yr1]:
                 share0 = values[cat][yr0] / totals[yr0] * 100
                 share1 = values[cat][yr1] / totals[yr1] * 100
                 share_pp.append(share1 - share0)
+                share_value.append(share1)
             else:
                 share_pp.append(None)
-        result[cat] = {"pct": pct, "share_pp": share_pp}
+                share_value.append(None)
+        result[cat] = {"pct": pct, "share_pp": share_pp, "nominal": nominal, "share_value": share_value}
     return result
 
 

@@ -352,35 +352,48 @@ _TABLE_CELL_STYLE = {"padding": "3px 6px", "textAlign": "left", "borderBottom": 
 _ICON_WIDTH = "11px"
 
 
-def _variation_span(value, suffix):
+_NOMINAL_COLOR = "#333"
+
+
+def _variation_span(value, suffix, nominal_text):
+    """`value` (variacao, colorida/com seta) seguido do valor nominal
+    entre parenteses, em preto (ex.: "+5.3% (77.4)")."""
+    nominal_span = html.Span(f"({nominal_text})", style={"color": _NOMINAL_COLOR, "marginLeft": "4px"}) if nominal_text is not None else None
     if value is None:
-        return html.Div("–", style={"color": "#aaa"})
+        children = [html.Span("–", style={"color": "#aaa"})]
+        if nominal_span is not None:
+            children.append(nominal_span)
+        return html.Div(children, style={"display": "flex"})
+
     color = _POSITIVE_COLOR if value >= 0 else _NEGATIVE_COLOR
     icon = "▲" if value >= 0 else "▼"
-    return html.Div(
-        [
-            html.Span(icon, style={"display": "inline-block", "width": _ICON_WIDTH}),
-            html.Span(f"{value:+.1f}{suffix}", style={"fontVariantNumeric": "tabular-nums"}),
-        ],
-        style={"display": "flex", "color": color},
-    )
+    children = [
+        html.Span(icon, style={"display": "inline-block", "width": _ICON_WIDTH, "color": color}),
+        html.Span(f"{value:+.1f}{suffix}", style={"fontVariantNumeric": "tabular-nums", "color": color}),
+    ]
+    if nominal_span is not None:
+        children.append(nominal_span)
+    return html.Div(children, style={"display": "flex"})
 
 
-def _variation_cell(pct, share_pp):
+def _variation_cell(pct, share_pp, nominal, share_value, value_decimals):
+    nominal_text = f"{nominal:,.{value_decimals}f}" if nominal is not None else None
+    share_text = f"{share_value:.1f}%" if share_value is not None else None
     return html.Td(
         html.Div(
-            [_variation_span(pct, "%"), _variation_span(share_pp, "pp")],
-            style={"display": "flex", "gap": "12px"},
+            [_variation_span(pct, "%", nominal_text), _variation_span(share_pp, "pp", share_text)],
+            style={"display": "flex", "gap": "18px"},
         ),
         style=_TABLE_CELL_STYLE,
     )
 
 
-def _variation_table(categories, values, additive):
-    """Tabela com a variacao % (valor) e a variacao de participacao (em
-    pontos percentuais, linha de baixo de cada celula) de cada categoria,
-    ano a ano - substitui os rotulos de variacao que antes ficavam dentro
-    do grafico."""
+def _variation_table(categories, values, additive, value_decimals):
+    """Tabela com a variacao % (valor) e a variacao de participacao (MS,
+    em pontos percentuais) de cada categoria, ano a ano, cada uma
+    seguida do proprio valor nominal entre parenteses (em preto) -
+    substitui os rotulos de variacao que antes ficavam dentro do
+    grafico."""
     if not categories:
         return html.P("Sem dados para esta combinacao de filtros.", style={"color": "#888", "fontSize": "12px"})
 
@@ -395,7 +408,11 @@ def _variation_table(categories, values, additive):
         html.Tr(
             [html.Td(cat, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"})]
             + [
-                _variation_cell(variations[cat]["pct"][i], variations[cat]["share_pp"][i])
+                _variation_cell(
+                    variations[cat]["pct"][i], variations[cat]["share_pp"][i],
+                    variations[cat]["nominal"][i], variations[cat]["share_value"][i],
+                    value_decimals,
+                )
                 for i in range(len(year_pairs))
             ]
         )
@@ -595,7 +612,7 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         )
         fig.update_layout(autosize=True, width=None)
 
-        table = _variation_table(categories, values, cfg["additive"])
+        table = _variation_table(categories, values, cfg["additive"], cfg["value_decimals"])
 
         insight = generate_insight(
             df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
