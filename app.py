@@ -342,25 +342,27 @@ def _dropdown(id_, options, value, disabled=False):
 _POSITIVE_COLOR = "#1E8E5A"
 _NEGATIVE_COLOR = "#C23B3B"
 
-_TABLE_CELL_STYLE = {"padding": "3px 4px", "textAlign": "center", "borderBottom": "1px solid #eee", "whiteSpace": "nowrap"}
+_TABLE_CELL_STYLE = {"padding": "3px 6px", "textAlign": "left", "borderBottom": "1px solid #eee", "whiteSpace": "nowrap"}
 
-# largura fixa do bloco icone+valor, centralizado na celula - sem isso, o
-# icone (seta) fica colado no numero e se desloca de linha pra linha
-# conforme o numero tem 3 ou 4 digitos (ex.: "+21.2%" vs "+146.9%")
-_VALUE_BLOCK_WIDTH = "56px"
+# largura fixa so do icone (a seta), nao do bloco inteiro - um bloco
+# com largura fixa pra "icone+valor" transbordava (sobrepondo a celula
+# vizinha) quando o numero era mais largo (ex.: "+146.9%"); deixando so
+# o icone com largura fixa e o valor cresce livre ao lado, sem cortar
+# nem sobrepor nada, e a seta ainda fica na mesma posicao em toda linha
+_ICON_WIDTH = "11px"
 
 
 def _variation_span(value, suffix, size):
     if value is None:
-        return html.Div("–", style={"color": "#aaa", "fontSize": size, "width": _VALUE_BLOCK_WIDTH, "margin": "0 auto"})
+        return html.Div("–", style={"color": "#aaa", "fontSize": size})
     color = _POSITIVE_COLOR if value >= 0 else _NEGATIVE_COLOR
     icon = "▲" if value >= 0 else "▼"
     return html.Div(
         [
-            html.Span(icon, style={"display": "inline-block", "width": "9px"}),
+            html.Span(icon, style={"display": "inline-block", "width": _ICON_WIDTH}),
             html.Span(f"{value:+.1f}{suffix}", style={"fontVariantNumeric": "tabular-nums"}),
         ],
-        style={"display": "flex", "color": color, "fontSize": size, "width": _VALUE_BLOCK_WIDTH, "margin": "0 auto"},
+        style={"display": "flex", "color": color, "fontSize": size},
     )
 
 
@@ -403,7 +405,7 @@ def _variation_table(categories, values, additive):
     ]
     return html.Table(
         [html.Thead(header), html.Tbody(rows)],
-        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "10px", "tableLayout": "fixed"},
+        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "10px"},
     )
 
 
