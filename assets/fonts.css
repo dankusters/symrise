@@ -1,0 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+
+html, body, #react-entry-point, #react-entry-point * {
+    font-family: 'Roboto', -apple-system, Helvetica, Arial, sans-serif !important;
+}

@@ -1,7 +1,13 @@
 [project]
 name = "symrise"
 version = "0.1.0"
-description = "Add your description here"
+description = "Dashboard Worldpanel (Symrise): evolucao anual de indicadores de perfumaria BR via Plotly/Dash"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pandas>=2.2",
+    "openpyxl>=3.1",
+    "plotly>=5.24",
+    "kaleido>=0.2",
+    "dash>=2.17",
+]
