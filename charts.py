@@ -427,7 +427,7 @@ def alluvial_stack_chart(
         font=dict(family=FONT_FAMILY),
         plot_bgcolor="white",
         paper_bgcolor="white",
-        margin=dict(l=60, r=110, t=90, b=50),
+        margin=dict(l=10, r=110, t=90, b=50),
         xaxis=dict(
             tickmode="array",
             tickvals=x_positions,
