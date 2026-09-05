@@ -317,7 +317,7 @@ def alluvial_stack_chart(
             mid = (bottom[cat][yr] + top[cat][yr]) / 2
             value_text = _format_value(values[cat][yr], value_decimals, is_percent)
             show_share = not is_percent and totals[yr] != 0 and ratio >= 0.08
-            share_text = f"{values[cat][yr] / totals[yr] * 100:.0f}%" if show_share else ""
+            share_text = f"{values[cat][yr] / totals[yr] * 100:.1f}%" if show_share else ""
             label = value_text if not share_text else f"{value_text}<br>{share_text}"
             fig.add_annotation(
                 x=i,
