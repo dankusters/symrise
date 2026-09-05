@@ -134,6 +134,31 @@ def compute_values(
     }
 
 
+def _empty_figure(title: str, subtitle: str, years: tuple[str, ...], height: int, width: int) -> go.Figure:
+    """Placeholder pra combinacoes de filtro sem nenhum dado (ex.: uma
+    marca que nao vende num segmento especifico) - em vez de estourar
+    tentando montar uma pilha vazia."""
+    header = title if not subtitle else f"{title}<br><span style='font-size:13px;color:#666'>{subtitle}</span>"
+    fig = go.Figure()
+    fig.add_annotation(
+        text="Sem dados para esta combinacao de filtros",
+        x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False,
+        font=dict(color="#888", size=14),
+    )
+    fig.update_layout(
+        title=dict(text=header, x=0.02, xanchor="left"),
+        height=height,
+        width=width,
+        font=dict(family=FONT_FAMILY),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(l=60, r=60, t=90, b=50),
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+    )
+    return fig
+
+
 def alluvial_stack_chart(
     df,
     indicator: str,
@@ -165,6 +190,9 @@ def alluvial_stack_chart(
     categorias sao descobertas dinamicamente e incluem um grupo sintetico
     "Outros" que nao existe como valor literal na coluna `dimension`.
     """
+    if not categories:
+        return _empty_figure(title, subtitle, years, height, width)
+
     values = values_override or compute_values(df, indicator, dimension, categories, years, filters, value_scale)
     totals = {yr: sum(values[cat][yr] for cat in categories) for yr in years}
 
