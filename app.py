@@ -352,9 +352,9 @@ _TABLE_CELL_STYLE = {"padding": "3px 6px", "textAlign": "left", "borderBottom": 
 _ICON_WIDTH = "11px"
 
 
-def _variation_span(value, suffix, size):
+def _variation_span(value, suffix):
     if value is None:
-        return html.Div("–", style={"color": "#aaa", "fontSize": size})
+        return html.Div("–", style={"color": "#aaa"})
     color = _POSITIVE_COLOR if value >= 0 else _NEGATIVE_COLOR
     icon = "▲" if value >= 0 else "▼"
     return html.Div(
@@ -362,17 +362,15 @@ def _variation_span(value, suffix, size):
             html.Span(icon, style={"display": "inline-block", "width": _ICON_WIDTH}),
             html.Span(f"{value:+.1f}{suffix}", style={"fontVariantNumeric": "tabular-nums"}),
         ],
-        style={"display": "flex", "color": color, "fontSize": size},
+        style={"display": "flex", "color": color},
     )
 
 
 def _variation_cell(pct, share_pp):
     return html.Td(
         html.Div(
-            [
-                html.Div(_variation_span(pct, "%", "10px")),
-                html.Div(_variation_span(share_pp, "pp", "9px"), style={"marginTop": "1px"}),
-            ]
+            [_variation_span(pct, "%"), _variation_span(share_pp, "pp")],
+            style={"display": "flex", "gap": "12px"},
         ),
         style=_TABLE_CELL_STYLE,
     )
@@ -395,7 +393,7 @@ def _variation_table(categories, values, additive):
     )
     rows = [
         html.Tr(
-            [html.Td(cat, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "fontSize": "10px", "whiteSpace": "normal"})]
+            [html.Td(cat, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"})]
             + [
                 _variation_cell(variations[cat]["pct"][i], variations[cat]["share_pp"][i])
                 for i in range(len(year_pairs))
@@ -405,7 +403,7 @@ def _variation_table(categories, values, additive):
     ]
     return html.Table(
         [html.Thead(header), html.Tbody(rows)],
-        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "10px"},
+        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "12px"},
     )
 
 
@@ -419,9 +417,9 @@ def _chart_block(key):
                     dcc.Graph(
                         id=f"graph-{key}",
                         config={"responsive": True, "displayModeBar": False},
-                        style={"flex": "3", "minWidth": "420px"},
+                        style={"flex": "2", "minWidth": "380px"},
                     ),
-                    html.Div(id=f"variation-table-{key}", style={"flex": "2", "minWidth": "340px", "paddingTop": "60px"}),
+                    html.Div(id=f"variation-table-{key}", style={"flex": "3", "minWidth": "460px", "paddingTop": "60px"}),
                 ],
             ),
             html.Div(
@@ -436,7 +434,7 @@ def _chart_block(key):
 
 
 app.layout = html.Div(
-    style={"fontFamily": "'Roboto', -apple-system, Helvetica, Arial, sans-serif", "maxWidth": "1100px", "margin": "0 auto", "padding": "24px"},
+    style={"fontFamily": "'Roboto', -apple-system, Helvetica, Arial, sans-serif", "maxWidth": "1400px", "margin": "0 auto", "padding": "24px"},
     children=[
         html.H2("Worldpanel Dashboard - Symrise"),
         dcc.Tabs(id="regiao-tabs", value=REGIAO_VIEWS[0], children=[dcc.Tab(label=r, value=r) for r in REGIAO_VIEWS]),
