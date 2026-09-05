@@ -145,6 +145,7 @@ def compute_variations(
     categories: list[str],
     years: tuple[str, ...] = YEARS_DEFAULT,
     additive: bool = True,
+    totals_override: dict[str, float] | None = None,
 ) -> dict[str, dict[str, list[float | None]]]:
     """Para cada categoria, a variacao percentual do valor e (se
     `additive`) a variacao de participacao (MS, em pontos percentuais)
@@ -152,8 +153,15 @@ def compute_variations(
     indicador e da participacao (MS) no ano final de cada transicao -
     usado pela tabela de variacoes do app (`{categoria: {"pct": [...],
     "share_pp": [...], "nominal": [...], "share_value": [...]}}`, uma
-    entrada por transicao de ano)."""
-    totals = {yr: sum(values[cat][yr] for cat in categories) for yr in years} if additive else {}
+    entrada por transicao de ano). `totals_override` usa um total
+    diferente da soma de `categories` pra calcular participacao (MS) -
+    usado quando `categories` e so um top N (ex.: top 10 submarcas) e o
+    MS de cada uma precisa ser sobre o mercado/marca inteiro, nao so
+    sobre a soma das exibidas."""
+    if totals_override is not None:
+        totals = totals_override
+    else:
+        totals = {yr: sum(values[cat][yr] for cat in categories) for yr in years} if additive else {}
     result: dict[str, dict[str, list[float | None]]] = {}
     for cat in categories:
         pct: list[float | None] = []
@@ -217,10 +225,13 @@ def alluvial_stack_chart(
     height: int = 640,
     width: int = 760,
     values_override: dict[str, dict[str, float]] | None = None,
+    show_total: bool = True,
 ) -> go.Figure:
     """Monta um grafico de barras empilhadas com fluxo curvo entre anos
     (estilo alluvial), com rotulos de valor/participacao e variacao %
-    ano a ano, tanto por categoria quanto no total.
+    ano a ano, tanto por categoria quanto no total (`show_total=False`
+    omite o rotulo do total e sua variacao - usado quando `categories` e
+    um recorte tipo "top N" cuja soma nao e o total real).
 
     `categories` deve estar ordenada do topo para a base da pilha (como
     aparece visualmente), e todas as categorias devem somar o "total" que
@@ -329,72 +340,82 @@ def alluvial_stack_chart(
                 align="center",
             )
 
-    # rotulo do total no topo de cada coluna
+    # rotulo do total no topo de cada coluna + variacao % do total ano a
+    # ano (chave/bracket) - so fazem sentido quando as categorias somam o
+    # total real; num recorte tipo "top N" (algumas submarcas/variantes
+    # descartadas do ranking) esse "total" seria so a soma do que sobrou
+    # no grafico, nao o total de verdade, entao o chamador pode pedir
+    # pra omitir com show_total=False
     max_total = max(totals.values()) if totals else 0
-    for i, yr in enumerate(years):
-        fig.add_annotation(
-            x=i,
-            y=top[categories[0]][yr] + max_total * 0.04,
-            text=f"<b>{totals[yr]:,.1f}</b>",
-            showarrow=False,
-            xanchor="center",
-            font=dict(color="#222222", size=16),
-        )
-
-    # variacao % do total, ano a ano: "chave" retangular (bracket) numa
-    # fileira fixa acima das colunas - sobe reto a partir do topo da coluna
-    # i, corre na horizontal (por baixo do pill) e desce com seta no topo
-    # da coluna i+1 - igual a referencia em fonte/"exemplo sankey e
-    # alluvium.png" (nao e uma curva; sao segmentos retos com cantos retos)
-    pill_y = max_total * 1.20
-    riser_gap = max_total * 0.13
-    # a subida e o pouso ficam na mesma altura (y0/y1 iguais a antes), mas
-    # deslocados horizontalmente para os dois lados do centro da coluna -
-    # a seta que chega termina um pouco antes do centro, a que parte do
-    # proximo bracket comeca um pouco depois - assim nao ficam coladas
-    junction_dx = 0.07
-    connector_gray = "rgba(128,128,128,0.7)"
-    for i in range(len(years) - 1):
-        yr0, yr1 = years[i], years[i + 1]
-        if totals[yr0]:
-            pct = (totals[yr1] - totals[yr0]) / totals[yr0] * 100
-            style = _change_style(pct)
-            x_mid = (i + i + 1) / 2
-            x_start = i + junction_dx
-            x_end = (i + 1) - junction_dx
-            y0 = top[categories[0]][yr0] + riser_gap
-            y1 = top[categories[0]][yr1] + riser_gap
-            fig.add_trace(
-                go.Scatter(
-                    x=[x_start, x_start, x_end, x_end],
-                    y=[y0, pill_y, pill_y, y1],
-                    mode="lines",
-                    line=dict(color=connector_gray, width=0.9),
-                    hoverinfo="skip",
-                    showlegend=False,
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=[x_end],
-                    y=[y1],
-                    mode="markers",
-                    marker=dict(symbol="triangle-down", size=6, color=connector_gray),
-                    hoverinfo="skip",
-                    showlegend=False,
-                )
-            )
+    if show_total:
+        for i, yr in enumerate(years):
             fig.add_annotation(
-                x=x_mid,
-                y=pill_y,
-                text=f"<b>{pct:+.1f}%</b>",
+                x=i,
+                y=top[categories[0]][yr] + max_total * 0.04,
+                text=f"<b>{totals[yr]:,.1f}</b>",
                 showarrow=False,
-                bordercolor=style["line"],
-                borderwidth=1,
-                borderpad=7,
-                bgcolor=style["bg"],
-                font=dict(color=style["text"], size=11),
+                xanchor="center",
+                font=dict(color="#222222", size=16),
             )
+
+        # variacao % do total, ano a ano: "chave" retangular (bracket) numa
+        # fileira fixa acima das colunas - sobe reto a partir do topo da
+        # coluna i, corre na horizontal (por baixo do pill) e desce com
+        # seta no topo da coluna i+1 - igual a referencia em fonte/
+        # "exemplo sankey e alluvium.png" (nao e uma curva; sao segmentos
+        # retos com cantos retos)
+        pill_y = max_total * 1.20
+        riser_gap = max_total * 0.13
+        # a subida e o pouso ficam na mesma altura (y0/y1 iguais a antes),
+        # mas deslocados horizontalmente para os dois lados do centro da
+        # coluna - a seta que chega termina um pouco antes do centro, a
+        # que parte do proximo bracket comeca um pouco depois - assim nao
+        # ficam coladas
+        junction_dx = 0.07
+        connector_gray = "rgba(128,128,128,0.7)"
+        for i in range(len(years) - 1):
+            yr0, yr1 = years[i], years[i + 1]
+            if totals[yr0]:
+                pct = (totals[yr1] - totals[yr0]) / totals[yr0] * 100
+                style = _change_style(pct)
+                x_mid = (i + i + 1) / 2
+                x_start = i + junction_dx
+                x_end = (i + 1) - junction_dx
+                y0 = top[categories[0]][yr0] + riser_gap
+                y1 = top[categories[0]][yr1] + riser_gap
+                fig.add_trace(
+                    go.Scatter(
+                        x=[x_start, x_start, x_end, x_end],
+                        y=[y0, pill_y, pill_y, y1],
+                        mode="lines",
+                        line=dict(color=connector_gray, width=0.9),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=[x_end],
+                        y=[y1],
+                        mode="markers",
+                        marker=dict(symbol="triangle-down", size=6, color=connector_gray),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    )
+                )
+                fig.add_annotation(
+                    x=x_mid,
+                    y=pill_y,
+                    text=f"<b>{pct:+.1f}%</b>",
+                    showarrow=False,
+                    bordercolor=style["line"],
+                    borderwidth=1,
+                    borderpad=7,
+                    bgcolor=style["bg"],
+                    font=dict(color=style["text"], size=11),
+                )
+    else:
+        pill_y = max_total * 1.08
 
     # rotulos de categoria na direita, alinhados ao ultimo ano.
     # ancorado por dados (xref="x"), rente a borda da ultima barra, ligado

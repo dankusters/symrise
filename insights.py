@@ -105,6 +105,7 @@ def generate_insight(
     additive: bool = True,
     max_chars: int = MAX_CHARS,
     values_override: dict[str, dict[str, float]] | None = None,
+    totals_override: dict[str, float] | None = None,
 ) -> str:
     """Monta um comentario descrevendo a trajetoria de cada categoria no
     ultimo ano do periodo: crescimento/recuo (comparado ao mercado total,
@@ -112,7 +113,10 @@ def generate_insight(
     aproximacao entre categorias de participacao parecida que estao
     divergindo. `categories` deve vir ordenada da maior para a menor
     (mesma convencao usada nos graficos). `values_override`: ver
-    docstring de `charts.alluvial_stack_chart`.
+    docstring de `charts.alluvial_stack_chart`. `totals_override`: ver
+    `charts.compute_variations` - usa esse total (em vez da soma de
+    `categories`) pra participacao (MS) e pra variacao "do mercado",
+    quando `categories` e so um recorte top N.
     """
     if len(years) < 2:
         return ""
@@ -131,8 +135,12 @@ def generate_insight(
     last_pct = {cat: changes[cat][-1] for cat in categories}
     prev_pct = {cat: (changes[cat][-2] if len(years) >= 3 else None) for cat in categories}
 
-    totals_last = sum(values[cat][years[-1]] for cat in categories) if additive else None
-    totals_prev = sum(values[cat][years[-2]] for cat in categories) if additive else None
+    if totals_override is not None:
+        totals_last = totals_override[years[-1]] if additive else None
+        totals_prev = totals_override[years[-2]] if additive else None
+    else:
+        totals_last = sum(values[cat][years[-1]] for cat in categories) if additive else None
+        totals_prev = sum(values[cat][years[-2]] for cat in categories) if additive else None
     market_pct = pct_change(totals_prev, totals_last) if additive else None
 
     share_last = {

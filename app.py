@@ -137,9 +137,13 @@ def _children_values(indicator, dim_col, base_filters, parent_cod):
     }
 
 
-def _rank_top_n(values_all, other_label="Outras", top_n=_TOP_N):
-    """Top N nomes de `values_all` (ultimo ano) + um grupo sintetico com
-    o restante, pra barra sempre fechar o total real."""
+def _rank_top_n(values_all, other_label="Outras", top_n=_TOP_N, add_other=True):
+    """Top N nomes de `values_all` (ultimo ano) + (se `add_other`) um
+    grupo sintetico com o restante, pra barra fechar o total real. Com
+    `add_other=False` o que sobra do top N e simplesmente descartado do
+    grafico (usado quando o "total" exibido nao e mais o real - ver
+    `show_total` em `alluvial_stack_chart` - e por isso nao faz sentido
+    fechar 100% com um bloco "Outras")."""
     if not values_all:
         return [], {}
     last_yr = YEARS_DEFAULT[-1]
@@ -147,7 +151,7 @@ def _rank_top_n(values_all, other_label="Outras", top_n=_TOP_N):
     top_names = ranked[:top_n]
     values = {name: values_all[name] for name in top_names}
     categories = list(top_names)
-    if len(ranked) > top_n:
+    if add_other and len(ranked) > top_n:
         values[other_label] = {
             yr: sum(values_all[n][yr] for n in ranked) - sum(values[n][yr] for n in top_names)
             for yr in YEARS_DEFAULT
@@ -164,10 +168,14 @@ def discover_top_categories(indicator, dim_col, base_filters, parent_cod, other_
     return _rank_top_n(_children_values(indicator, dim_col, base_filters, parent_cod), other_label, top_n)
 
 
-def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, year_cols, result, add):
+def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, add):
     rows = _cod_children(scoped_df, start_cod)
     if rows.empty:
         return False
+    if exclude_classificacoes:
+        rows = rows[~rows["classificacao"].isin(exclude_classificacoes)]
+        if rows.empty:
+            return True  # existiam filhos, so que todos excluidos - nao e uma folha "sem dados"
 
     at_target = rows["classificacao"].isin(target_classificacoes)
     direct = rows[at_target]
@@ -178,7 +186,7 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
                 add(name, yr, float(value) * scale)
 
     for row in rows[~at_target].itertuples():
-        found = _descend_scoped(scale, dim_col, scoped_df, row.cod, target_classificacoes, year_cols, result, add)
+        found = _descend_scoped(scale, dim_col, scoped_df, row.cod, target_classificacoes, exclude_classificacoes, year_cols, result, add)
         if not found:
             # folha antes de chegar no nivel alvo (a planilha nao detalha
             # mais fundo aqui) - a propria linha e o que ha pra mostrar
@@ -189,7 +197,7 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
     return True
 
 
-def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classificacoes):
+def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classificacoes, exclude_classificacoes=frozenset()):
     """{nome: {ano: valor}} de todas as entidades no "nivel alvo" (ex.:
     {"Marca"}, {"Sub Marca"} ou {"Variante"}) descendentes de `start_cod`,
     descendo recursivamente enquanto um filho ainda nao chegou la.
@@ -202,7 +210,12 @@ def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classi
     de niveis por quebra. `base_filters` (regiao/segmento) e aplicado uma
     unica vez antes da recursao, que so refaz o match do Cod. a cada
     passo - sem isso, uma descida sem fabricante/marca fixo (arvore
-    inteira) refiltrava o dataframe inteiro centenas de vezes."""
+    inteira) refiltrava o dataframe inteiro centenas de vezes.
+
+    `exclude_classificacoes` descarta uma subarvore inteira (nem conta
+    como entrada propria, nem desce nela) - usado pra tirar "Outros
+    Fabricante" da quebra de Submarca/Variante: e um residual de
+    empresas nao rastreadas, nao uma submarca/variante de verdade."""
     if not start_cod:
         return {}
     scoped_df = _scope(base_filters)
@@ -213,8 +226,23 @@ def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classi
     def _add(name, yr, value):
         result.setdefault(name, {y: 0.0 for y in YEARS_DEFAULT})[yr] += value
 
-    _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, year_cols, result, _add)
+    _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, _add)
     return result
+
+
+def _cod_own_values(indicator, cod, base_filters):
+    """{ano: valor} da propria linha de `cod` (nao dos filhos) - usado
+    como o total "de verdade" (mercado/marca inteiro) quando a quebra
+    exibida e so um recorte top N, cujo somatorio nao fecha o total real."""
+    if not cod:
+        return None
+    scoped_df = _scope(base_filters)
+    row = scoped_df[scoped_df["cod"] == cod]
+    if row.empty:
+        return None
+    scale = INDICATORS[indicator]["value_scale"]
+    row = row.iloc[0]
+    return {yr: float(row[f"{indicator}_{yr}"]) * scale for yr in YEARS_DEFAULT}
 
 
 def _self_cod(regiao_view, segmento_f, classificacao, fabricante=None, marca=None, rotulo=None):
@@ -286,26 +314,46 @@ def _segmento_root_values(regiao_view, indicator):
     return {seg: values_all.get(seg, zeros) for seg in SEGMENTOS}
 
 
-def _resolve_unit(key, values, categories, years=YEARS_DEFAULT):
+def _resolve_unit(key, values, categories, true_totals=None, years=YEARS_DEFAULT):
     """Se `key` tiver unidade dinamica (ver DYNAMIC_UNIT) e o maior total
-    (soma das categorias, em milhoes) passar de 1 bilhao, reescala
-    `values` pra bilhoes e retorna o rotulo/casas decimais certos; senao
-    devolve os valores como vieram (ja em milhoes)."""
+    passar de 1 bilhao, reescala `values` (e `true_totals`, se dado) pra
+    bilhoes e retorna o rotulo/casas decimais certos; senao devolve os
+    valores como vieram (ja em milhoes). Usa `true_totals` (o total real,
+    quando o grafico so mostra um top N) pra decidir a unidade quando
+    disponivel - a soma das categorias exibidas seria menor que o
+    mercado/marca inteiro."""
     if key not in DYNAMIC_UNIT:
-        return values, None, None
+        return values, true_totals, None, None
     unit_millions, unit_billions, decimals_billions = DYNAMIC_UNIT[key]
-    if not categories:
-        return values, unit_millions, None
-    max_total = max((sum(values[cat][yr] for cat in categories) for yr in years), default=0.0)
+    if true_totals is not None:
+        max_total = max(true_totals.values(), default=0.0)
+    elif categories:
+        max_total = max((sum(values[cat][yr] for cat in categories) for yr in years), default=0.0)
+    else:
+        return values, true_totals, unit_millions, None
     if max_total >= _BILLION_THRESHOLD:
         rescaled = {cat: {yr: v / 1000.0 for yr, v in yearly.items()} for cat, yearly in values.items()}
-        return rescaled, unit_billions, decimals_billions
-    return values, unit_millions, None
+        rescaled_totals = (
+            {yr: v / 1000.0 for yr, v in true_totals.items()} if true_totals is not None else None
+        )
+        return rescaled, rescaled_totals, unit_billions, decimals_billions
+    return values, true_totals, unit_millions, None
+
+
+# classificacao excluida da descida de Submarca/Variante: "Outros
+# Fabricante" e o residual de empresas nao rastreadas (nunca uma
+# submarca/variante de verdade), entao nao concorre por uma vaga no
+# ranking nem aparece como "folha" generica quando nao tem detalhe
+_EXCLUDE_FROM_RANKING = frozenset({"Outros Fabricante"})
 
 
 def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, indicator_id, top_n=_TOP_N):
-    """Retorna (categories, dimension, filters, values_override, title)
-    para a combinacao atual de quebra/filtros/regiao."""
+    """Retorna (categories, dimension, filters, values_override, title,
+    true_totals) para a combinacao atual de quebra/filtros/regiao.
+    `true_totals` e None exceto em Submarca/Variante, onde e o total real
+    (mercado/marca inteiro) usado pra calcular participacao (MS) - o
+    grafico so mostra um top N ali, entao a soma das categorias exibidas
+    nao e mais o total de verdade."""
     crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f)
 
     if breakdown == "segmento":
@@ -314,15 +362,15 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
             # _segmento_root_values) em vez do filtro generico, que so
             # enxerga 'segmento'='Total' nesse nivel da arvore
             values = _segmento_root_values(regiao_view, indicator_id)
-            return SEGMENTOS, "segmento", {}, values, f"{crumb} > Segmentos"
+            return SEGMENTOS, "segmento", {}, values, f"{crumb} > Segmentos", None
         filters = {"regiao": regiao_view, **_scope_filters(fabricante_f, marca_f, submarca_f, variante_f)}
-        return SEGMENTOS, "segmento", filters, None, f"{crumb} > Segmentos"
+        return SEGMENTOS, "segmento", filters, None, f"{crumb} > Segmentos", None
 
     if breakdown == "fabricante":
         base_filters = {"regiao": regiao_view, "segmento": segmento_f}
         parent_cod = _fabricante_root_cod(regiao_view, segmento_f)
         categories, values = discover_top_categories(indicator_id, "fabricante", base_filters, parent_cod)
-        return categories, "fabricante", base_filters, values, f"{crumb} > Fabricantes (top {_TOP_N})"
+        return categories, "fabricante", base_filters, values, f"{crumb} > Fabricantes (top {_TOP_N})", None
 
     # Marca/Submarca/Variante: nao exigem fabricante/marca/submarca fixo -
     # com o pai em "Total", descobre a partir da raiz (todos os
@@ -336,7 +384,7 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
         values_all = _descend_to_level(indicator_id, "marca", base_filters, start_cod, {"Marca"})
         categories, values = _rank_top_n(values_all, top_n=top_n)
-        return categories, "marca", base_filters, values, f"{crumb} > Marcas (top {top_n})"
+        return categories, "marca", base_filters, values, f"{crumb} > Marcas (top {top_n})", None
 
     if breakdown == "submarca":
         if marca_f and marca_f != "Total":
@@ -345,9 +393,10 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
             start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
         else:
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
-        values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Marca"})
-        categories, values = _rank_top_n(values_all, top_n=top_n)
-        return categories, "rotulo", base_filters, values, f"{crumb} > Submarcas (top {top_n})"
+        values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Marca"}, _EXCLUDE_FROM_RANKING)
+        categories, values = _rank_top_n(values_all, top_n=top_n, add_other=False)
+        true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
+        return categories, "rotulo", base_filters, values, f"{crumb} > Submarcas (top {top_n})", true_totals
 
     # breakdown == "variante"
     if submarca_f and submarca_f != "Total":
@@ -358,9 +407,10 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
         start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
     else:
         start_cod = _fabricante_root_cod(regiao_view, segmento_f)
-    values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Variante"})
-    categories, values = _rank_top_n(values_all, top_n=top_n)
-    return categories, "rotulo", base_filters, values, f"{crumb} > Variantes (top {top_n})"
+    values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+    categories, values = _rank_top_n(values_all, top_n=top_n, add_other=False)
+    true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
+    return categories, "rotulo", base_filters, values, f"{crumb} > Variantes (top {top_n})", true_totals
 
 
 def _dropdown(id_, options, value, disabled=False):
@@ -424,16 +474,16 @@ def _variation_cell(pct, share_pp, nominal, share_value, value_decimals):
     )
 
 
-def _variation_table(categories, values, additive, value_decimals):
+def _variation_table(categories, values, additive, value_decimals, totals_override=None):
     """Tabela com a variacao % (valor) e a variacao de participacao (MS,
     em pontos percentuais) de cada categoria, ano a ano, cada uma
     seguida do proprio valor nominal entre parenteses (em preto) -
     substitui os rotulos de variacao que antes ficavam dentro do
-    grafico."""
+    grafico. `totals_override`: ver `charts.compute_variations`."""
     if not categories:
         return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
 
-    variations = compute_variations(values, categories, YEARS_DEFAULT, additive)
+    variations = compute_variations(values, categories, YEARS_DEFAULT, additive, totals_override)
     year_pairs = [(YEARS_DEFAULT[i][1:], YEARS_DEFAULT[i + 1][1:]) for i in range(len(YEARS_DEFAULT) - 1)]
 
     header = html.Tr(
@@ -632,7 +682,7 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
     figs, tables, insights = [], [], []
     for key in INDICATOR_BLOCKS:
         cfg = INDICATORS[key]
-        categories, dim_col, filters, values_override, title = build_selection(
+        categories, dim_col, filters, values_override, title, true_totals = build_selection(
             breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, key, top_n,
         )
         # resolve os valores uma unica vez (grafico, tabela e insight usam
@@ -644,23 +694,29 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         else:
             values = {}
 
-        values, unit, decimals_override = _resolve_unit(key, values, categories)
+        values, true_totals, unit, decimals_override = _resolve_unit(key, values, categories, true_totals)
         value_decimals = decimals_override if decimals_override is not None else cfg["value_decimals"]
         subtitle = f"{cfg['label']} ({unit})" if unit else cfg["label"]
+        # com true_totals (Submarca/Variante = so um recorte top N), o
+        # "total" que apareceria no topo da barra/na variacao do total
+        # seria so a soma do recorte exibido, nao o total real - por
+        # isso o grafico omite os dois nesse caso
+        show_total = true_totals is None
 
         fig = alluvial_stack_chart(
             df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
             title=title, subtitle=subtitle, values_override=values,
             value_scale=1.0, value_decimals=value_decimals, is_percent=cfg["is_percent"],
+            show_total=show_total,
         )
         fig.update_layout(autosize=True, width=None)
 
-        table = _variation_table(categories, values, cfg["additive"], value_decimals)
+        table = _variation_table(categories, values, cfg["additive"], value_decimals, true_totals)
 
         insight = generate_insight(
             df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
             value_scale=1.0, value_decimals=value_decimals, unit_label=unit or cfg["unit_label"],
-            additive=cfg["additive"], values_override=values,
+            additive=cfg["additive"], values_override=values, totals_override=true_totals,
         )
         figs.append(fig)
         tables.append(table)
