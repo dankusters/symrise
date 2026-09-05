@@ -26,7 +26,7 @@ Uso tipico:
 
 from __future__ import annotations
 
-from charts import YEARS_DEFAULT, compute_values
+from charts import YEARS_DEFAULT, compute_values, pct_change
 
 MAX_CHARS = 500
 
@@ -44,12 +44,6 @@ _SHARE_CHANGE_MIN_PP = 0.5
 # duas categorias sao tratadas como "vizinhas" em participacao se a
 # diferenca de share for menor que isso (pp)
 _PEER_SHARE_MAX_DIFF_PP = 6.0
-
-
-def _pct_change(prev: float, curr: float) -> float | None:
-    if prev == 0:
-        return None
-    return (curr - prev) / prev * 100
 
 
 def _year_label(yr: str) -> str:
@@ -127,7 +121,7 @@ def generate_insight(
 
     changes: dict[str, list[float | None]] = {
         cat: [
-            _pct_change(values[cat][years[i]], values[cat][years[i + 1]])
+            pct_change(values[cat][years[i]], values[cat][years[i + 1]])
             for i in range(len(years) - 1)
         ]
         for cat in categories
@@ -139,7 +133,7 @@ def generate_insight(
 
     totals_last = sum(values[cat][years[-1]] for cat in categories) if additive else None
     totals_prev = sum(values[cat][years[-2]] for cat in categories) if additive else None
-    market_pct = _pct_change(totals_prev, totals_last) if additive else None
+    market_pct = pct_change(totals_prev, totals_last) if additive else None
 
     share_last = {
         cat: (values[cat][years[-1]] / totals_last * 100 if additive and totals_last else None)

@@ -134,6 +134,41 @@ def compute_values(
     }
 
 
+def pct_change(prev: float | None, curr: float | None) -> float | None:
+    if not prev:
+        return None
+    return (curr - prev) / prev * 100
+
+
+def compute_variations(
+    values: dict[str, dict[str, float]],
+    categories: list[str],
+    years: tuple[str, ...] = YEARS_DEFAULT,
+    additive: bool = True,
+) -> dict[str, dict[str, list[float | None]]]:
+    """Para cada categoria, a variacao percentual do valor e (se
+    `additive`) a variacao de participacao (MS, em pontos percentuais)
+    entre cada par de anos consecutivos - usado pela tabela de variacoes
+    do app (`{categoria: {"pct": [...], "share_pp": [...]}}`, uma entrada
+    por transicao de ano)."""
+    totals = {yr: sum(values[cat][yr] for cat in categories) for yr in years} if additive else {}
+    result: dict[str, dict[str, list[float | None]]] = {}
+    for cat in categories:
+        pct: list[float | None] = []
+        share_pp: list[float | None] = []
+        for i in range(len(years) - 1):
+            yr0, yr1 = years[i], years[i + 1]
+            pct.append(pct_change(values[cat][yr0], values[cat][yr1]))
+            if additive and totals[yr0] and totals[yr1]:
+                share0 = values[cat][yr0] / totals[yr0] * 100
+                share1 = values[cat][yr1] / totals[yr1] * 100
+                share_pp.append(share1 - share0)
+            else:
+                share_pp.append(None)
+        result[cat] = {"pct": pct, "share_pp": share_pp}
+    return result
+
+
 def _empty_figure(title: str, subtitle: str, years: tuple[str, ...], height: int, width: int) -> go.Figure:
     """Placeholder pra combinacoes de filtro sem nenhum dado (ex.: uma
     marca que nao vende num segmento especifico) - em vez de estourar
@@ -353,36 +388,6 @@ def alluvial_stack_chart(
                 bgcolor=style["bg"],
                 font=dict(color=style["text"], size=11),
             )
-
-    # variacao % por categoria, ano a ano, no meio de cada fluxo
-    # (mesma logica de faixa minima usada nos rotulos de valor)
-    for cat in categories:
-        for i in range(len(years) - 1):
-            yr0, yr1 = years[i], years[i + 1]
-            avg_height = (
-                (top[cat][yr0] - bottom[cat][yr0]) + (top[cat][yr1] - bottom[cat][yr1])
-            ) / 2
-            ratio = avg_height / max_total_for_labels if max_total_for_labels else 0
-            if ratio < 0.03:
-                continue
-            if values[cat][yr0]:
-                pct = (values[cat][yr1] - values[cat][yr0]) / values[cat][yr0] * 100
-                x_mid = (i + i + 1) / 2
-                y_mid = (
-                    (bottom[cat][yr0] + top[cat][yr0]) / 2
-                    + (bottom[cat][yr1] + top[cat][yr1]) / 2
-                ) / 2
-                fig.add_annotation(
-                    x=x_mid,
-                    y=y_mid,
-                    text=f"{pct:+.0f}%",
-                    showarrow=False,
-                    bordercolor="#ffffff",
-                    borderwidth=1,
-                    borderpad=2,
-                    bgcolor="rgba(255,255,255,0.85)",
-                    font=dict(color="#333333", size=10),
-                )
 
     # rotulos de categoria na direita, alinhados ao ultimo ano.
     # ancorado por dados (xref="x"), rente a borda da ultima barra, ligado

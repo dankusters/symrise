@@ -15,7 +15,7 @@ import re
 
 from dash import Dash, Input, Output, State, dcc, html
 
-from charts import YEARS_DEFAULT, alluvial_stack_chart
+from charts import YEARS_DEFAULT, alluvial_stack_chart, compute_values, compute_variations
 from etl import build_dataset
 from insights import generate_insight
 
@@ -256,17 +256,80 @@ def _dropdown(id_, options, value, disabled=False):
     return dcc.Dropdown(id=id_, options=[{"label": o, "value": o} for o in options], value=value, clearable=False, disabled=disabled)
 
 
+_POSITIVE_COLOR = "#1E8E5A"
+_NEGATIVE_COLOR = "#C23B3B"
+
+_TABLE_CELL_STYLE = {"padding": "4px 6px", "textAlign": "center", "borderBottom": "1px solid #eee"}
+
+
+def _variation_span(value, suffix, size):
+    if value is None:
+        return html.Span("-", style={"color": "#aaa", "fontSize": size})
+    color = _POSITIVE_COLOR if value >= 0 else _NEGATIVE_COLOR
+    icon = "▲" if value >= 0 else "▼"
+    return html.Span(f"{icon} {value:+.1f}{suffix}", style={"color": color, "fontSize": size})
+
+
+def _variation_cell(pct, share_pp):
+    return html.Td(
+        html.Div(
+            [
+                html.Div(_variation_span(pct, "%", "11px")),
+                html.Div(_variation_span(share_pp, "pp", "10px"), style={"marginTop": "1px"}),
+            ]
+        ),
+        style=_TABLE_CELL_STYLE,
+    )
+
+
+def _variation_table(categories, values, additive):
+    """Tabela com a variacao % (valor) e a variacao de participacao (em
+    pontos percentuais, linha de baixo de cada celula) de cada categoria,
+    ano a ano - substitui os rotulos de variacao que antes ficavam dentro
+    do grafico."""
+    if not categories:
+        return html.P("Sem dados para esta combinacao de filtros.", style={"color": "#888", "fontSize": "12px"})
+
+    variations = compute_variations(values, categories, YEARS_DEFAULT, additive)
+    year_pairs = [(YEARS_DEFAULT[i][1:], YEARS_DEFAULT[i + 1][1:]) for i in range(len(YEARS_DEFAULT) - 1)]
+
+    header = html.Tr(
+        [html.Th("Categoria", style={**_TABLE_CELL_STYLE, "textAlign": "left"})]
+        + [html.Th(f"{y0}→{y1}", style=_TABLE_CELL_STYLE) for y0, y1 in year_pairs]
+    )
+    rows = [
+        html.Tr(
+            [html.Td(cat, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "fontSize": "11px"})]
+            + [
+                _variation_cell(variations[cat]["pct"][i], variations[cat]["share_pp"][i])
+                for i in range(len(year_pairs))
+            ]
+        )
+        for cat in categories
+    ]
+    return html.Table(
+        [html.Thead(header), html.Tbody(rows)],
+        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "11px"},
+    )
+
+
 def _chart_block(key):
     return html.Div(
-        style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "flex-start", "marginBottom": "36px"},
+        style={"marginBottom": "40px"},
         children=[
-            dcc.Graph(
-                id=f"graph-{key}",
-                config={"responsive": True, "displayModeBar": False},
-                style={"flex": "2", "minWidth": "480px"},
+            html.Div(
+                style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "flex-start"},
+                children=[
+                    dcc.Graph(
+                        id=f"graph-{key}",
+                        config={"responsive": True, "displayModeBar": False},
+                        style={"flex": "2", "minWidth": "480px"},
+                    ),
+                    html.Div(id=f"variation-table-{key}", style={"flex": "1", "minWidth": "260px", "paddingTop": "60px"}),
+                ],
             ),
             html.Div(
-                style={"flex": "1", "minWidth": "220px", "padding": "228px 8px 0"},
+                style={"marginTop": "12px"},
                 children=[
                     html.B("Highlights"),
                     html.P(id=f"insight-text-{key}", style={"margin": "4px 0 0", "fontSize": "15.5px", "lineHeight": "1.5", "color": "#333"}),
@@ -410,6 +473,7 @@ def update_filters_disabled(breakdown):
 
 @app.callback(
     [Output(f"graph-{key}", "figure") for key in INDICATOR_BLOCKS]
+    + [Output(f"variation-table-{key}", "children") for key in INDICATOR_BLOCKS]
     + [Output(f"insight-text-{key}", "children") for key in INDICATOR_BLOCKS],
     Input("dimension-dropdown", "value"),
     Input("regiao-tabs", "value"),
@@ -423,30 +487,40 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
     if not breakdown:
         breakdown = "segmento"
 
-    figs, insights = [], []
+    figs, tables, insights = [], [], []
     for key in INDICATOR_BLOCKS:
         cfg = INDICATORS[key]
         categories, dim_col, filters, values_override, title = build_selection(
             breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, key,
         )
-        value_scale = 1.0 if values_override is not None else cfg["value_scale"]
+        # resolve os valores uma unica vez (grafico, tabela e insight usam
+        # exatamente os mesmos numeros)
+        if values_override is not None:
+            values = values_override
+        elif categories:
+            values = compute_values(df, key, dim_col, categories, YEARS_DEFAULT, filters, cfg["value_scale"])
+        else:
+            values = {}
 
         fig = alluvial_stack_chart(
             df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
-            title=title, subtitle=cfg["label"], values_override=values_override,
-            value_scale=value_scale, value_decimals=cfg["value_decimals"], is_percent=cfg["is_percent"],
+            title=title, subtitle=cfg["label"], values_override=values,
+            value_scale=1.0, value_decimals=cfg["value_decimals"], is_percent=cfg["is_percent"],
         )
         fig.update_layout(autosize=True, width=None)
 
+        table = _variation_table(categories, values, cfg["additive"])
+
         insight = generate_insight(
             df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
-            value_scale=value_scale, value_decimals=cfg["value_decimals"], unit_label=cfg["unit_label"],
-            additive=cfg["additive"], values_override=values_override,
+            value_scale=1.0, value_decimals=cfg["value_decimals"], unit_label=cfg["unit_label"],
+            additive=cfg["additive"], values_override=values,
         )
         figs.append(fig)
+        tables.append(table)
         insights.append(insight)
 
-    return (*figs, *insights)
+    return (*figs, *tables, *insights)
 
 
 if __name__ == "__main__":
