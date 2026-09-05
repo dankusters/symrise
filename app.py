@@ -351,6 +351,11 @@ _TABLE_CELL_STYLE = {"padding": "3px 6px", "textAlign": "left", "borderBottom": 
 # nem sobrepor nada, e a seta ainda fica na mesma posicao em toda linha
 _ICON_WIDTH = "11px"
 
+# largura MINIMA (nao fixa) do bloco icone+valor - da pra alinhar o
+# parenteses do valor nominal numa coluna sem repetir o bug de antes: um
+# valor raro maior que isso (ex.: "+298.9%") so empurra o parenteses
+# daquela linha, sem cortar nem sobrepor nada
+_VALUE_MIN_WIDTH = "60px"
 
 _NOMINAL_COLOR = "#333"
 
@@ -360,17 +365,18 @@ def _variation_span(value, suffix, nominal_text):
     entre parenteses, em preto (ex.: "+5.3% (77.4)")."""
     nominal_span = html.Span(f"({nominal_text})", style={"color": _NOMINAL_COLOR, "marginLeft": "4px"}) if nominal_text is not None else None
     if value is None:
-        children = [html.Span("–", style={"color": "#aaa"})]
-        if nominal_span is not None:
-            children.append(nominal_span)
-        return html.Div(children, style={"display": "flex"})
-
-    color = _POSITIVE_COLOR if value >= 0 else _NEGATIVE_COLOR
-    icon = "▲" if value >= 0 else "▼"
-    children = [
-        html.Span(icon, style={"display": "inline-block", "width": _ICON_WIDTH, "color": color}),
-        html.Span(f"{value:+.1f}{suffix}", style={"fontVariantNumeric": "tabular-nums", "color": color}),
-    ]
+        value_block = html.Div("–", style={"color": "#aaa", "minWidth": _VALUE_MIN_WIDTH})
+    else:
+        color = _POSITIVE_COLOR if value >= 0 else _NEGATIVE_COLOR
+        icon = "▲" if value >= 0 else "▼"
+        value_block = html.Div(
+            [
+                html.Span(icon, style={"display": "inline-block", "width": _ICON_WIDTH, "color": color}),
+                html.Span(f"{value:+.1f}{suffix}", style={"fontVariantNumeric": "tabular-nums", "color": color}),
+            ],
+            style={"display": "flex", "minWidth": _VALUE_MIN_WIDTH},
+        )
+    children = [value_block]
     if nominal_span is not None:
         children.append(nominal_span)
     return html.Div(children, style={"display": "flex"})
@@ -381,8 +387,10 @@ def _variation_cell(pct, share_pp, nominal, share_value, value_decimals):
     share_text = f"{share_value:.1f}%" if share_value is not None else None
     return html.Td(
         html.Div(
-            [_variation_span(pct, "%", nominal_text), _variation_span(share_pp, "pp", share_text)],
-            style={"display": "flex", "gap": "18px"},
+            [
+                _variation_span(pct, "%", nominal_text),
+                html.Div(_variation_span(share_pp, "pp", share_text), style={"marginTop": "2px"}),
+            ]
         ),
         style=_TABLE_CELL_STYLE,
     )
@@ -420,7 +428,7 @@ def _variation_table(categories, values, additive, value_decimals):
     ]
     return html.Table(
         [html.Thead(header), html.Tbody(rows)],
-        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "12px"},
+        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "14px"},
     )
 
 
@@ -434,9 +442,9 @@ def _chart_block(key):
                     dcc.Graph(
                         id=f"graph-{key}",
                         config={"responsive": True, "displayModeBar": False},
-                        style={"flex": "2", "minWidth": "380px"},
+                        style={"flex": "5", "minWidth": "420px"},
                     ),
-                    html.Div(id=f"variation-table-{key}", style={"flex": "3", "minWidth": "460px", "paddingTop": "60px"}),
+                    html.Div(id=f"variation-table-{key}", style={"flex": "4", "minWidth": "420px", "paddingTop": "60px"}),
                 ],
             ),
             html.Div(
