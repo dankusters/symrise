@@ -124,6 +124,13 @@ def build_dataset(path: str = SOURCE_PATH, sheet_name: str = SHEET_NAME) -> pd.D
 
     df["marca"] = df["marca"].map(_fix_marca)
 
+    # "We Pink" (ramo agregado por segmento='Total') e "WePink" (ramo por
+    # segmento real) sao o mesmo fabricante/marca grafado diferente
+    # (ver ESCOPO.md); padroniza como "WePink" pra nao aparecerem como
+    # entidades separadas em filtros/quebras
+    for col in ("fabricante", "marca"):
+        df[col] = df[col].replace("We Pink", "WePink")
+
     indicator_cols = [c for c in df.columns if c not in CATEGORY_COLUMNS.values()]
     # "-" e o placeholder da planilha para indicadores calculados sem base
     # (ex.: divisao por zero em Vol. por Comprador/Frequencia/Preco Medio)

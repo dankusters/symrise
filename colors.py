@@ -67,7 +67,6 @@ BRAND_COLORS: dict[str, str] = {
     "Rugol": "#A2D93A",
     "Suissa": "#C87D28",
     "Turma da Xuxa - Cli": "#199A2A",
-    "We Pink": "#CC3E5A",
     "WePink": "#1DC94B",
 }
 
