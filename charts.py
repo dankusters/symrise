@@ -183,7 +183,7 @@ def _empty_figure(title: str, subtitle: str, years: tuple[str, ...], height: int
     header = title if not subtitle else f"{title}<br><span style='font-size:13px;color:#666'>{subtitle}</span>"
     fig = go.Figure()
     fig.add_annotation(
-        text="Sem dados para esta combinacao de filtros",
+        text="Sem dados para esta combinação de filtros",
         x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False,
         font=dict(color="#888", size=14),
     )

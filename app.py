@@ -58,10 +58,21 @@ FILTER_DEPTH = {"fabricante": 1, "marca": 2, "submarca": 3, "variante": 4}
 # generate_insight
 INDICATOR_BLOCKS = ["volume", "unidades", "valor_com_presentes"]
 INDICATORS = {
-    "volume": dict(label="Volume (lts)", value_scale=1e-6, value_decimals=1, unit_label="milhoes de litros", is_percent=False, additive=True),
-    "unidades": dict(label="Unidades (milhoes)", value_scale=1e-6, value_decimals=1, unit_label="milhoes", is_percent=False, additive=True),
-    "valor_com_presentes": dict(label="Valor com Presentes (R$)", value_scale=1e-6, value_decimals=0, unit_label="R$ milhoes", is_percent=False, additive=True),
+    "volume": dict(label="Volume", value_scale=1e-6, value_decimals=1, unit_label="milhões de litros", is_percent=False, additive=True),
+    "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=1, unit_label="milhões", is_percent=False, additive=True),
+    "valor_com_presentes": dict(label="Valor com Presentes", value_scale=1e-6, value_decimals=0, unit_label="R$ milhões", is_percent=False, additive=True),
 }
+
+# indicadores cujo rotulo de unidade alterna entre milhoes/bilhoes
+# conforme o total exibido - sem isso, um total grande (ex.: Valor com
+# Presentes do mercado inteiro) aparecia como "19031.7 (R$ milhoes)" em
+# vez de "19.0 (R$ bilhoes)". Cada entrada: (rotulo em milhoes, rotulo
+# em bilhoes, casas decimais quando em bilhoes)
+DYNAMIC_UNIT = {
+    "volume": ("milhões de litros", "bilhões de litros", 2),
+    "valor_com_presentes": ("R$ milhões", "R$ bilhões", 1),
+}
+_BILLION_THRESHOLD = 1000.0  # valores ja vem em milhoes; 1000 milhoes = 1 bilhao
 
 _TOP_N = 6
 
@@ -275,6 +286,23 @@ def _segmento_root_values(regiao_view, indicator):
     return {seg: values_all.get(seg, zeros) for seg in SEGMENTOS}
 
 
+def _resolve_unit(key, values, categories, years=YEARS_DEFAULT):
+    """Se `key` tiver unidade dinamica (ver DYNAMIC_UNIT) e o maior total
+    (soma das categorias, em milhoes) passar de 1 bilhao, reescala
+    `values` pra bilhoes e retorna o rotulo/casas decimais certos; senao
+    devolve os valores como vieram (ja em milhoes)."""
+    if key not in DYNAMIC_UNIT:
+        return values, None, None
+    unit_millions, unit_billions, decimals_billions = DYNAMIC_UNIT[key]
+    if not categories:
+        return values, unit_millions, None
+    max_total = max((sum(values[cat][yr] for cat in categories) for yr in years), default=0.0)
+    if max_total >= _BILLION_THRESHOLD:
+        rescaled = {cat: {yr: v / 1000.0 for yr, v in yearly.items()} for cat, yearly in values.items()}
+        return rescaled, unit_billions, decimals_billions
+    return values, unit_millions, None
+
+
 def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, indicator_id, top_n=_TOP_N):
     """Retorna (categories, dimension, filters, values_override, title)
     para a combinacao atual de quebra/filtros/regiao."""
@@ -403,7 +431,7 @@ def _variation_table(categories, values, additive, value_decimals):
     substitui os rotulos de variacao que antes ficavam dentro do
     grafico."""
     if not categories:
-        return html.P("Sem dados para esta combinacao de filtros.", style={"color": "#888", "fontSize": "12px"})
+        return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
 
     variations = compute_variations(values, categories, YEARS_DEFAULT, additive)
     year_pairs = [(YEARS_DEFAULT[i][1:], YEARS_DEFAULT[i + 1][1:]) for i in range(len(YEARS_DEFAULT) - 1)]
@@ -613,18 +641,22 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         else:
             values = {}
 
+        values, unit, decimals_override = _resolve_unit(key, values, categories)
+        value_decimals = decimals_override if decimals_override is not None else cfg["value_decimals"]
+        subtitle = f"{cfg['label']} ({unit})" if unit else cfg["label"]
+
         fig = alluvial_stack_chart(
             df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
-            title=title, subtitle=cfg["label"], values_override=values,
-            value_scale=1.0, value_decimals=cfg["value_decimals"], is_percent=cfg["is_percent"],
+            title=title, subtitle=subtitle, values_override=values,
+            value_scale=1.0, value_decimals=value_decimals, is_percent=cfg["is_percent"],
         )
         fig.update_layout(autosize=True, width=None)
 
-        table = _variation_table(categories, values, cfg["additive"], cfg["value_decimals"])
+        table = _variation_table(categories, values, cfg["additive"], value_decimals)
 
         insight = generate_insight(
             df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
-            value_scale=1.0, value_decimals=cfg["value_decimals"], unit_label=cfg["unit_label"],
+            value_scale=1.0, value_decimals=value_decimals, unit_label=unit or cfg["unit_label"],
             additive=cfg["additive"], values_override=values,
         )
         figs.append(fig)

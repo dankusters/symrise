@@ -52,16 +52,16 @@ def _year_label(yr: str) -> str:
 
 def _trend_phrase(cat: str, last: float | None, prev: float | None) -> str:
     if last is None:
-        return f"{cat} sem variacao calculavel"
+        return f"{cat} sem variação calculável"
     if last > _FLAT_PCT:
         if prev is not None and prev > _FLAT_PCT:
-            return f"{cat} continua trajetoria de crescimento, com alta de {last:+.0f}%"
-        return f"{cat} cresce {last:+.0f}%"
+            return f"{cat} continua trajetória de crescimento, com alta de {last:+.1f}%"
+        return f"{cat} cresce {last:+.1f}%"
     if last < -_FLAT_PCT:
         if prev is not None and prev < -_FLAT_PCT:
-            return f"{cat} segue em queda, recuando {last:+.0f}%"
-        return f"{cat} recuou {last:+.0f}%"
-    return f"{cat} ficou estavel ({last:+.0f}%)"
+            return f"{cat} segue em queda, recuando {last:+.1f}%"
+        return f"{cat} recuou {last:+.1f}%"
+    return f"{cat} ficou estável ({last:+.1f}%)"
 
 
 def _market_phrase(last: float | None, market: float | None, is_largest: bool) -> str:
@@ -78,18 +78,18 @@ def _market_phrase(last: float | None, market: float | None, is_largest: bool) -
         # sentido da comparacao inverte quando o mercado esta em recuo
         maior_magnitude = last < market if market < 0 else last > market
         rel = "acima" if maior_magnitude else "abaixo"
-        phrase = f"{rel} do {direcao} do mercado ({market:+.0f}%)"
+        phrase = f"{rel} do {direcao} do mercado ({market:+.1f}%)"
         if is_largest and rel == "acima":
-            phrase += ", puxando a media do mercado"
+            phrase += ", puxando a média do mercado"
         return phrase
-    return f"na contramao do mercado ({market:+.0f}%)"
+    return f"na contramão do mercado ({market:+.1f}%)"
 
 
 def _share_phrase(share_change_pp: float | None) -> str:
     if share_change_pp is None or abs(share_change_pp) < _SHARE_CHANGE_MIN_PP:
         return ""
     verbo = "ganhando" if share_change_pp > 0 else "perdendo"
-    return f"{verbo} {abs(share_change_pp):.0f}pp em MS"
+    return f"{verbo} {abs(share_change_pp):.1f}pp em MS"
 
 
 def generate_insight(
@@ -173,7 +173,7 @@ def generate_insight(
                         continue
                     verbo = "cresceu" if last_pct[other] > 0 else "caiu"
                     peer_note[smaller] = (
-                        f"muito proximo da participacao de {other}, que {verbo} {last_pct[other]:+.0f}%"
+                        f"muito próximo da participação de {other}, que {verbo} {last_pct[other]:+.1f}%"
                     )
                     used_as_peer.add(a)
                     used_as_peer.add(b)
@@ -193,14 +193,14 @@ def generate_insight(
         if share_frag:
             fragments.append(share_frag)
         if cat in peer_note:
-            porem = "porem ainda " if (share_last.get(cat) or 0) < 15 else ""
-            share_txt = f"{porem}{share_last[cat]:.0f}% do total" if share_last.get(cat) is not None else ""
+            porem = "porém ainda " if (share_last.get(cat) or 0) < 15 else ""
+            share_txt = f"{porem}{share_last[cat]:.1f}% do total" if share_last.get(cat) is not None else ""
             extra = ", ".join(x for x in (share_txt, peer_note[cat]) if x)
             fragments.append(extra)
         sentences.append(", ".join(fragments))
 
     if not sentences:
-        return f"Sem variacao relevante em {last_year} no periodo analisado."
+        return f"Sem variação relevante em {last_year} no período analisado."
 
     text = ""
     for sentence in sentences:
