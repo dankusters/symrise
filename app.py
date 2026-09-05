@@ -533,7 +533,10 @@ app.layout = html.Div(
                 html.Div([html.Label("Variante"), _dropdown("variante-filter", ["Total"] + ALL_VARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
             ],
         ),
-        html.Div(children=[_chart_block(key) for key in INDICATOR_BLOCKS]),
+        dcc.Loading(
+            type="circle",
+            children=html.Div(children=[_chart_block(key) for key in INDICATOR_BLOCKS]),
+        ),
     ],
 )
 
