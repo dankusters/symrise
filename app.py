@@ -432,17 +432,20 @@ app.layout = html.Div(
     State("dimension-dropdown", "value"),
 )
 def update_breakdown_options(fabricante_f, marca_f, current_breakdown):
+    # as 5 opcoes ficam sempre visiveis (em vez de somem do dropdown) -
+    # as que dependem de um filtro anterior aparecem desabilitadas com
+    # uma dica do que falta escolher, pra nao parecer que "nao existem"
+    can_marca = fabricante_f in MARCA_BY_FABRICANTE
+    can_submarca = marca_f in SUBMARCA_BY_MARCA
+    can_variante = marca_f in VARIANTE_BY_MARCA
     options = [
         {"label": "Segmento", "value": "segmento"},
         {"label": "Fabricante", "value": "fabricante"},
+        {"label": "Marca" if can_marca else "Marca (escolha um Fabricante)", "value": "marca", "disabled": not can_marca},
+        {"label": "Submarca" if can_submarca else "Submarca (escolha uma Marca)", "value": "submarca", "disabled": not can_submarca},
+        {"label": "Variante" if can_variante else "Variante (escolha uma Marca)", "value": "variante", "disabled": not can_variante},
     ]
-    if fabricante_f in MARCA_BY_FABRICANTE:
-        options.append({"label": "Marca", "value": "marca"})
-    if marca_f in SUBMARCA_BY_MARCA:
-        options.append({"label": "Submarca", "value": "submarca"})
-    if marca_f in VARIANTE_BY_MARCA:
-        options.append({"label": "Variante", "value": "variante"})
-    valid_values = {o["value"] for o in options}
+    valid_values = {o["value"] for o in options if not o.get("disabled")}
     value = current_breakdown if current_breakdown in valid_values else "segmento"
     return options, value
 
