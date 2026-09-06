@@ -585,6 +585,8 @@ app.layout = html.Div(
         ),
         dcc.Loading(
             type="circle",
+            fullscreen=True,
+            overlay_style={"visibility": "visible", "opacity": 0.4, "backgroundColor": "white"},
             children=html.Div(children=[_chart_block(key) for key in INDICATOR_BLOCKS]),
         ),
     ],
