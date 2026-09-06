@@ -17,6 +17,7 @@ from dash import Dash, Input, Output, State, dcc, html
 
 from charts import YEARS_DEFAULT, alluvial_stack_chart, compute_values, compute_variations, line_evolution_chart
 from etl import build_dataset
+from export_pptx import build_pptx
 from insights import generate_insight
 
 df = build_dataset()
@@ -612,6 +613,21 @@ def _chart_block(key):
         style={"marginBottom": "40px"},
         children=[
             html.Div(
+                style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "4px"},
+                children=[
+                    html.Button(
+                        "Exportar PowerPoint",
+                        id=f"export-btn-{key}",
+                        n_clicks=0,
+                        style={
+                            "fontSize": "12.5px", "padding": "5px 10px", "cursor": "pointer",
+                            "border": "1px solid #ccc", "borderRadius": "4px", "background": "white",
+                        },
+                    ),
+                    dcc.Download(id=f"download-{key}"),
+                ],
+            ),
+            html.Div(
                 style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "flex-start"},
                 children=[
                     dcc.Graph(
@@ -812,26 +828,19 @@ def _weighted_average(values, weight_values, categories, years=YEARS_DEFAULT):
     return result
 
 
-@app.callback(
-    [Output(f"graph-{key}", "figure") for key in INDICATOR_BLOCKS]
-    + [Output(f"variation-table-{key}", "children") for key in INDICATOR_BLOCKS]
-    + [Output(f"insight-text-{key}", "children") for key in INDICATOR_BLOCKS],
-    Input("dimension-dropdown", "value"),
-    Input("regiao-tabs", "value"),
-    Input("segmento-filter", "value"),
-    Input("fabricante-filter", "value"),
-    Input("marca-filter", "value"),
-    Input("submarca-filter", "value"),
-    Input("variante-filter", "value"),
-    Input("top-n-selector", "value"),
-)
-def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+    """Monta os dados de cada bloco (grafico + tabela + insight) pra
+    combinacao atual de quebra/filtros/regiao - {indicador: dict(...)}.
+    Usado tanto pelo callback que redesenha a tela (`update_charts`)
+    quanto pelos botoes de exportar PowerPoint (`_export_pptx`), pra
+    garantir que o arquivo exportado tenha exatamente os mesmos numeros
+    exibidos na tela."""
     if not breakdown:
         breakdown = "segmento"
     if breakdown not in TOP_N_BREAKDOWNS:
         top_n = _TOP_N
 
-    figs, tables, insights = [], [], []
+    blocks: dict[str, dict] = {}
     # categorias/valores ja resolvidos de cada bloco, indexado por
     # indicador - alimenta os blocos com `rank_with`/`weight_indicator`
     # (ver INDICATORS: "volume" precisa vir antes deles em INDICATOR_BLOCKS)
@@ -893,18 +902,79 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
             )
             fig.update_layout(autosize=True, width=None)
 
-        table = _variation_table(categories, values, cfg["additive"], value_decimals, true_totals)
-
-        insight = generate_insight(
-            df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
-            value_scale=1.0, value_decimals=value_decimals, unit_label=insight_unit_label,
-            additive=cfg["additive"], values_override=values, totals_override=true_totals,
+        blocks[key] = dict(
+            fig=fig, categories=categories, values=values, dim_col=dim_col, filters=filters,
+            value_decimals=value_decimals, true_totals=true_totals, cfg=cfg,
+            insight_unit_label=insight_unit_label,
         )
-        figs.append(fig)
+
+    return blocks
+
+
+@app.callback(
+    [Output(f"graph-{key}", "figure") for key in INDICATOR_BLOCKS]
+    + [Output(f"variation-table-{key}", "children") for key in INDICATOR_BLOCKS]
+    + [Output(f"insight-text-{key}", "children") for key in INDICATOR_BLOCKS],
+    Input("dimension-dropdown", "value"),
+    Input("regiao-tabs", "value"),
+    Input("segmento-filter", "value"),
+    Input("fabricante-filter", "value"),
+    Input("marca-filter", "value"),
+    Input("submarca-filter", "value"),
+    Input("variante-filter", "value"),
+    Input("top-n-selector", "value"),
+)
+def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+    blocks = _build_blocks(
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+    )
+
+    figs, tables, insights = [], [], []
+    for key in INDICATOR_BLOCKS:
+        b = blocks[key]
+        table = _variation_table(b["categories"], b["values"], b["cfg"]["additive"], b["value_decimals"], b["true_totals"])
+        insight = generate_insight(
+            df, indicator=key, dimension=b["dim_col"], categories=b["categories"], filters=b["filters"],
+            value_scale=1.0, value_decimals=b["value_decimals"], unit_label=b["insight_unit_label"],
+            additive=b["cfg"]["additive"], values_override=b["values"], totals_override=b["true_totals"],
+        )
+        figs.append(b["fig"])
         tables.append(table)
         insights.append(insight)
 
     return (*figs, *tables, *insights)
+
+
+def _make_export_callback(key):
+    @app.callback(
+        Output(f"download-{key}", "data"),
+        Input(f"export-btn-{key}", "n_clicks"),
+        State("dimension-dropdown", "value"),
+        State("regiao-tabs", "value"),
+        State("segmento-filter", "value"),
+        State("fabricante-filter", "value"),
+        State("marca-filter", "value"),
+        State("submarca-filter", "value"),
+        State("variante-filter", "value"),
+        State("top-n-selector", "value"),
+        prevent_initial_call=True,
+    )
+    def export(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+        blocks = _build_blocks(
+            breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+        )
+        b = blocks[key]
+        pptx_bytes = build_pptx(
+            b["fig"], b["categories"], b["values"], b["cfg"]["additive"], b["value_decimals"], b["true_totals"],
+        )
+        filename = f"{INDICATORS[key]['label'].replace(' ', '_')}.pptx"
+        return dcc.send_bytes(pptx_bytes, filename)
+
+    return export
+
+
+for _key in INDICATOR_BLOCKS:
+    _make_export_callback(_key)
 
 
 if __name__ == "__main__":
