@@ -603,6 +603,42 @@ def line_evolution_chart(
     return fig
 
 
+def price_unit_effects(
+    unidades: dict[str, float], valor: dict[str, float], years: tuple[str, ...] = YEARS_DEFAULT,
+) -> list[dict]:
+    """Decompoe a variacao ano a ano do "Valor com Presentes" em efeito
+    Unidades (volume vendido) e efeito Preco Medio, dado que Valor =
+    Unidades x Preco - uma entrada por transicao de ano (`{yr0, yr1,
+    base, unit_effect, price_effect, unit_pct, price_pct, total_pct}`).
+    Usado tanto por `price_unit_waterfall_chart` (barras) quanto por
+    `insights.generate_price_unit_insight` (texto) - mesma formula nos
+    dois lugares. O preco usado aqui e DERIVADO (valor/unidades) - nao a
+    coluna "Preco Medio" da planilha, que nao reconcilia exatamente com
+    valor/unidades - e por isso os dois efeitos somam exatamente a
+    variacao real do Valor, sem residuo:
+
+        efeito Unidades (ano N -> N+1) = (unidades[N+1] - unidades[N]) * preco[N]
+        efeito Preco    (ano N -> N+1) = unidades[N+1] * (preco[N+1] - preco[N])
+    """
+    price = {yr: (valor[yr] / unidades[yr] if unidades.get(yr) else 0.0) for yr in years}
+    effects = []
+    for i in range(len(years) - 1):
+        yr0, yr1 = years[i], years[i + 1]
+        base = valor[yr0]
+        unit_effect = (unidades[yr1] - unidades[yr0]) * price[yr0]
+        price_effect = unidades[yr1] * (price[yr1] - price[yr0])
+        effects.append(
+            dict(
+                yr0=yr0, yr1=yr1, base=base,
+                unit_effect=unit_effect, price_effect=price_effect,
+                unit_pct=(unit_effect / base * 100) if base else None,
+                price_pct=(price_effect / base * 100) if base else None,
+                total_pct=((valor[yr1] - valor[yr0]) / base * 100) if base else None,
+            )
+        )
+    return effects
+
+
 def price_unit_waterfall_chart(
     title: str,
     unidades: dict[str, float],
@@ -613,25 +649,16 @@ def price_unit_waterfall_chart(
     height: int = 460,
     width: int = 760,
 ) -> go.Figure:
-    """Waterfall que decompoe a variacao ano a ano do "Valor com
-    Presentes" de uma unica categoria em efeito Unidades (volume
-    vendido) e efeito Preco Medio, dado que Valor = Unidades x Preco.
-    `title` e o breadcrumb completo (ex.: "T. Brasil > Segmentos >
-    Feminino"), no mesmo formato/alinhamento dos outros graficos - ver
-    `build_selection`. O preco usado aqui e DERIVADO (valor/unidades) -
-    nao a coluna "Preco Medio" da planilha, que nao reconcilia exatamente
-    com valor/unidades - e por isso os dois efeitos somam exatamente a
-    variacao real do Valor, sem residuo:
-
-        efeito Unidades (ano N -> N+1) = (unidades[N+1] - unidades[N]) * preco[N]
-        efeito Preco    (ano N -> N+1) = unidades[N+1] * (preco[N+1] - preco[N])
-
-    Uma barra por ano (cinza, valor absoluto) com duas barras de efeito
-    (verde/vermelho) entre cada par de anos - chave com a variacao % do
-    total em cima (igual a `alluvial_stack_chart`) e CAGR do periodo no
-    canto superior direito.
+    """Waterfall da decomposicao de `price_unit_effects` (ver docstring
+    la pra formula/racional) pra uma unica categoria: uma barra por ano
+    (cinza, valor absoluto) com duas barras de efeito (verde/vermelho)
+    entre cada par de anos - chave com a variacao % do total em cima
+    (igual a `alluvial_stack_chart`) e CAGR do periodo no canto superior
+    direito. `title` e o breadcrumb completo (ex.: "T. Brasil >
+    Segmentos > Feminino"), no mesmo formato/alinhamento dos outros
+    graficos - ver `build_selection`.
     """
-    price = {yr: (valor[yr] / unidades[yr] if unidades.get(yr) else 0.0) for yr in years}
+    effects = price_unit_effects(unidades, valor, years)
 
     def _year_label(yr: str) -> str:
         return yr.replace("Y", "")
@@ -644,17 +671,16 @@ def price_unit_waterfall_chart(
     # (pct do total, indice da barra-ano inicial, indice da barra-ano
     # final, valor inicial, valor final) - pra desenhar a chave em cima
     brackets: list[tuple[float | None, int, int, float, float]] = []
-    for i in range(len(years) - 1):
-        yr0, yr1 = years[i], years[i + 1]
-        base = valor[yr0]
-        unit_effect = (unidades[yr1] - unidades[yr0]) * price[yr0]
-        price_effect = unidades[yr1] * (price[yr1] - price[yr0])
-
-        for label, effect in (("Unidades", unit_effect), ("Preço", price_effect)):
+    for i, eff in enumerate(effects):
+        yr1 = eff["yr1"]
+        for label, effect, pct in (
+            ("Unidades", eff["unit_effect"], eff["unit_pct"]),
+            ("Preço", eff["price_effect"], eff["price_pct"]),
+        ):
             x_ticktext.append(label)
             measures.append("relative")
             y_values.append(effect)
-            pct_text = f"{effect / base * 100:.1f}%" if base else ""
+            pct_text = f"{pct:.1f}%" if pct is not None else ""
             effect_color = _POSITIVE["text"] if effect >= 0 else _NEGATIVE["text"]
             bar_text.append(
                 f"<span style='font-size:10px;color:{effect_color}'>{pct_text}</span>"
@@ -666,8 +692,7 @@ def price_unit_waterfall_chart(
         y_values.append(valor[yr1])
         bar_text.append(f"<b>{valor[yr1]:,.{value_decimals}f}</b>")
 
-        total_pct = (valor[yr1] - valor[yr0]) / valor[yr0] * 100 if valor[yr0] else None
-        brackets.append((total_pct, i * 3, i * 3 + 3, valor[yr0], valor[yr1]))
+        brackets.append((eff["total_pct"], i * 3, i * 3 + 3, eff["base"], valor[yr1]))
 
     # eixo x NUMERICO (0..N), com os rotulos de texto so no tickmode -
     # nao um eixo categorico "de verdade": as linhas/marcadores da chave

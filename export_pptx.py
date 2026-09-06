@@ -264,3 +264,49 @@ def build_pptx(
     buf = BytesIO()
     prs.save(buf)
     return buf.getvalue()
+
+
+def build_price_unit_pptx(charts: list[tuple[go.Figure, str]]) -> bytes:
+    """Exportacao da aba "Price/Unit": um slide por categoria, grafico
+    (waterfall) a esquerda e o texto de Highlights a direita - mesmo
+    layout/proporcao de `_add_combo_slide`, so com um texto simples no
+    lugar da tabela (essa aba nao tem tabela de variacao). `charts`: uma
+    entrada (fig, texto_highlight) por categoria, na mesma ordem exibida
+    na tela."""
+    prs = Presentation()
+    prs.slide_width = _SLIDE_WIDTH
+    prs.slide_height = _SLIDE_HEIGHT
+
+    chart_area_width, area_height = _chart_area_size()
+    text_left = _MARGIN + chart_area_width + _GAP
+    text_width = _SLIDE_WIDTH - _MARGIN - text_left
+
+    for fig, highlight_text in charts:
+        img_w_px = 760
+        img_h_px = int(fig.layout.height or 460)
+        img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
+
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _MARGIN, chart_area_width, area_height)
+        slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
+
+        txbox = slide.shapes.add_textbox(text_left, _MARGIN, text_width, area_height)
+        tf = txbox.text_frame
+        tf.word_wrap = True
+
+        heading_run = tf.paragraphs[0].add_run()
+        heading_run.text = "Highlights"
+        heading_run.font.bold = True
+        heading_run.font.size = Pt(16)
+        heading_run.font.color.rgb = _HEADER_RGB
+
+        body_p = tf.add_paragraph()
+        body_p.space_before = Pt(8)
+        body_run = body_p.add_run()
+        body_run.text = highlight_text
+        body_run.font.size = Pt(13)
+        body_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    buf = BytesIO()
+    prs.save(buf)
+    return buf.getvalue()

@@ -26,7 +26,7 @@ Uso tipico:
 
 from __future__ import annotations
 
-from charts import YEARS_DEFAULT, compute_values, pct_change
+from charts import YEARS_DEFAULT, compute_values, pct_change, price_unit_effects
 
 MAX_CHARS = 500
 
@@ -216,4 +216,57 @@ def generate_insight(
         if len(text + addition) > max_chars:
             break
         text += addition
+    return text
+
+
+def generate_price_unit_insight(
+    unidades: dict[str, float], valor: dict[str, float], years: tuple[str, ...] = YEARS_DEFAULT,
+) -> str:
+    """Comentario pro waterfall de `charts.price_unit_waterfall_chart`:
+    de quanto do crescimento/queda do Valor com Presentes na ULTIMA
+    transicao de ano (ex.: 2024->2025) e responsabilidade de cada efeito
+    (Unidades vendidas vs Preco Medio) - ver `charts.price_unit_effects`
+    pra formula. Cobre as 4 combinacoes de sinal possiveis (unidades e
+    preco na mesma direcao, ou em direcoes opostas)."""
+    effects = price_unit_effects(unidades, valor, years)
+    if not effects:
+        return ""
+    last = effects[-1]
+    total_pct, unit_pct, price_pct = last["total_pct"], last["unit_pct"], last["price_pct"]
+    if total_pct is None or unit_pct is None or price_pct is None:
+        return "Sem variação calculável no último período."
+
+    yr_label = last["yr1"].replace("Y", "")
+    prev_label = last["yr0"].replace("Y", "")
+    units_up = unit_pct >= 0
+    price_up = price_pct >= 0
+
+    dominant_is_price = abs(price_pct) >= abs(unit_pct)
+    dominant_pct = price_pct if dominant_is_price else unit_pct
+    dominant_label = "preço" if dominant_is_price else "unidades vendidas"
+    causal = (
+        "ações de reprecificação, mudança de mix, política de descontos, entre outras decisões"
+        if dominant_is_price
+        else "ganho ou perda de penetração/distribuição, sazonalidade, ações promocionais de volume, entre outros fatores"
+    )
+    growth_phrase = (
+        f"do crescimento de {total_pct:.1f}%" if total_pct >= 0 else f"da queda de {abs(total_pct):.1f}%"
+    )
+
+    if units_up == price_up:
+        verbo = "cresceram" if units_up else "caíram"
+        text = (
+            f"Tanto as vendas de unidades quanto o preço médio {verbo} em {yr_label} (ante {prev_label}), "
+            f"sendo {abs(dominant_pct):.1f}% {growth_phrase} no Valor com Presentes de responsabilidade "
+            f"do efeito {dominant_label}, que pode ser derivado de {causal}."
+        )
+    else:
+        unidades_verbo = "cresceram" if units_up else "caíram"
+        preco_verbo = "cresceu" if price_up else "caiu"
+        text = (
+            f"As vendas de unidades {unidades_verbo} ({unit_pct:+.1f}%) enquanto o preço médio {preco_verbo} "
+            f"({price_pct:+.1f}%) em {yr_label} (ante {prev_label}); o efeito {dominant_label} foi "
+            f"determinante, respondendo por {abs(dominant_pct):.1f}% {growth_phrase} no Valor com "
+            f"Presentes, que pode ser derivado de {causal}."
+        )
     return text

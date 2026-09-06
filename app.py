@@ -24,8 +24,8 @@ from charts import (
     price_unit_waterfall_chart,
 )
 from etl import build_dataset
-from export_pptx import build_pptx
-from insights import generate_insight
+from export_pptx import build_price_unit_pptx, build_pptx
+from insights import generate_insight, generate_price_unit_insight
 
 df = build_dataset()
 
@@ -748,10 +748,27 @@ app.layout = html.Div(
                     html.Div(
                         id=f"indicator-panel-{PRICE_UNIT_TAB_KEY}",
                         style={"display": "none"},
-                        children=html.Div(
-                            id="waterfall-container",
-                            style={"display": "flex", "flexWrap": "wrap", "gap": "16px"},
-                        ),
+                        children=[
+                            html.Div(
+                                style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "12px"},
+                                children=[
+                                    html.Button(
+                                        "Exportar PowerPoint",
+                                        id="export-btn-price-unit",
+                                        n_clicks=0,
+                                        style={
+                                            "fontSize": "12.5px", "padding": "5px 10px", "cursor": "pointer",
+                                            "border": "1px solid #ccc", "borderRadius": "4px", "background": "white",
+                                        },
+                                    ),
+                                    dcc.Download(id="download-price-unit"),
+                                ],
+                            ),
+                            html.Div(
+                                id="waterfall-container",
+                                style={"display": "flex", "flexDirection": "column", "gap": "16px"},
+                            ),
+                        ],
                     )
                 ]
             ),
@@ -1063,24 +1080,15 @@ for _key in INDICATOR_BLOCKS:
     _make_export_callback(_key)
 
 
-@app.callback(
-    Output("waterfall-container", "children"),
-    Input("dimension-dropdown", "value"),
-    Input("regiao-tabs", "value"),
-    Input("segmento-filter", "value"),
-    Input("fabricante-filter", "value"),
-    Input("marca-filter", "value"),
-    Input("submarca-filter", "value"),
-    Input("variante-filter", "value"),
-    Input("top-n-selector", "value"),
-)
-def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
     """Um waterfall por categoria (nao um unico grafico com todas juntas,
     como os outros 4 blocos): decompoe a variacao ano a ano do Valor com
     Presentes de cada categoria em efeito Unidades e efeito Preco Medio.
     Reaproveita o ranking do bloco Valor com Presentes (mesmas categorias
     que aparecem naquela aba) e busca Unidades para essas mesmas
-    categorias (`categories_override`)."""
+    categorias (`categories_override`). Retorna uma lista de
+    dict(cat, fig, insight) - usado tanto por `update_waterfall` (tela)
+    quanto pelo botao de exportar (`export_price_unit`)."""
     if not breakdown:
         breakdown = "segmento"
     if breakdown not in TOP_N_BREAKDOWNS:
@@ -1091,7 +1099,7 @@ def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, 
         "valor_com_presentes", top_n,
     )
     if not categories:
-        return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
+        return []
 
     if valor_override is not None:
         valor_values = valor_override
@@ -1120,14 +1128,69 @@ def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, 
     valor_values, _, unit_label, decimals_override = _resolve_unit("valor_com_presentes", valor_values, categories)
     value_decimals = decimals_override if decimals_override is not None else INDICATORS["valor_com_presentes"]["value_decimals"]
 
-    graphs = []
+    result = []
     for cat in categories:
         fig = price_unit_waterfall_chart(
             f"{title} > {cat}", unidades_values[cat], valor_values[cat],
             unit_label=unit_label, value_decimals=value_decimals,
         )
-        graphs.append(dcc.Graph(figure=fig, config={"responsive": False, "displayModeBar": False}))
-    return graphs
+        insight = generate_price_unit_insight(unidades_values[cat], valor_values[cat])
+        result.append(dict(cat=cat, fig=fig, insight=insight))
+    return result
+
+
+@app.callback(
+    Output("waterfall-container", "children"),
+    Input("dimension-dropdown", "value"),
+    Input("regiao-tabs", "value"),
+    Input("segmento-filter", "value"),
+    Input("fabricante-filter", "value"),
+    Input("marca-filter", "value"),
+    Input("submarca-filter", "value"),
+    Input("variante-filter", "value"),
+    Input("top-n-selector", "value"),
+)
+def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+    rows = _build_price_unit_rows(
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+    )
+    if not rows:
+        return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
+
+    return [
+        html.Div(
+            style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "center"},
+            children=[
+                dcc.Graph(figure=row["fig"], config={"responsive": False, "displayModeBar": False}),
+                html.Div(
+                    [html.B("Highlights"), html.P(row["insight"], style={"margin": "4px 0 0", "fontSize": "15.5px", "lineHeight": "1.5", "color": "#333"})],
+                    style={"flex": "1", "minWidth": "260px", "maxWidth": "360px"},
+                ),
+            ],
+        )
+        for row in rows
+    ]
+
+
+@app.callback(
+    Output("download-price-unit", "data"),
+    Input("export-btn-price-unit", "n_clicks"),
+    State("dimension-dropdown", "value"),
+    State("regiao-tabs", "value"),
+    State("segmento-filter", "value"),
+    State("fabricante-filter", "value"),
+    State("marca-filter", "value"),
+    State("submarca-filter", "value"),
+    State("variante-filter", "value"),
+    State("top-n-selector", "value"),
+    prevent_initial_call=True,
+)
+def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+    rows = _build_price_unit_rows(
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+    )
+    pptx_bytes = build_price_unit_pptx([(row["fig"], row["insight"]) for row in rows])
+    return dcc.send_bytes(pptx_bytes, "Price_Unit.pptx")
 
 
 if __name__ == "__main__":
