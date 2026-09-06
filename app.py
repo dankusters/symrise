@@ -696,14 +696,40 @@ app.layout = html.Div(
                 html.Div([html.Label("Variante"), _dropdown("variante-filter", ["Total"] + ALL_VARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
             ],
         ),
+        dcc.Tabs(
+            id="indicator-tabs",
+            value=INDICATOR_BLOCKS[0],
+            children=[dcc.Tab(label=INDICATORS[key]["label"], value=key) for key in INDICATOR_BLOCKS],
+            style={"marginBottom": "16px"},
+        ),
         dcc.Loading(
             type="circle",
             fullscreen=True,
             overlay_style={"visibility": "visible", "opacity": 0.4, "backgroundColor": "white"},
-            children=html.Div(children=[_chart_block(key) for key in INDICATOR_BLOCKS]),
+            children=html.Div(
+                children=[
+                    html.Div(
+                        id=f"indicator-panel-{key}",
+                        style={"display": "block" if key == INDICATOR_BLOCKS[0] else "none"},
+                        children=_chart_block(key),
+                    )
+                    for key in INDICATOR_BLOCKS
+                ]
+            ),
         ),
     ],
 )
+
+
+@app.callback(
+    [Output(f"indicator-panel-{key}", "style") for key in INDICATOR_BLOCKS],
+    Input("indicator-tabs", "value"),
+)
+def update_indicator_tabs(active_key):
+    # todos os blocos continuam sendo calculados/atualizados normalmente
+    # pelo update_charts (Input de filtro nao muda) - so a visibilidade
+    # troca, entao alternar de aba e instantaneo, sem precisar recarregar
+    return [{"display": "block"} if key == active_key else {"display": "none"} for key in INDICATOR_BLOCKS]
 
 
 @app.callback(
