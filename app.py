@@ -662,6 +662,17 @@ def update_top_n_visibility(breakdown):
     return style
 
 
+def _chart_height(breakdown, categories):
+    """Marca/Submarca/Variante empilham ate 30 categorias (top N) numa
+    unica coluna - a altura padrao (640px) nao da espaco suficiente pros
+    rotulos de cada uma sem sobrepor perto da base da pilha. Cresce com o
+    numero de categorias realmente exibidas, so pra essas 3 quebras."""
+    if breakdown not in TOP_N_BREAKDOWNS:
+        return 640
+    n = len(categories)
+    return max(640, min(1500, 640 + max(0, n - 8) * 35))
+
+
 @app.callback(
     [Output(f"graph-{key}", "figure") for key in INDICATOR_BLOCKS]
     + [Output(f"variation-table-{key}", "children") for key in INDICATOR_BLOCKS]
@@ -709,7 +720,7 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
             df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
             title=title, subtitle=subtitle, values_override=values,
             value_scale=1.0, value_decimals=value_decimals, is_percent=cfg["is_percent"],
-            show_total=show_total,
+            show_total=show_total, height=_chart_height(breakdown, categories),
         )
         fig.update_layout(autosize=True, width=None)
 
