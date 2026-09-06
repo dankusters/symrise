@@ -141,13 +141,38 @@ def _chart_area_size():
     return chart_area_width, area_height
 
 
-def _add_combo_slide(prs, img_bytes, header, rows_data, value_decimals, show_share):
+def _picture_box(img_w_px, img_h_px, box_left, box_top, box_width, box_height):
+    """(left, top, width, height) do maior retangulo que cabe em
+    `box_width`x`box_height` mantendo a proporcao de `img_w_px`x`img_h_px`
+    (contain), centralizado na caixa. Precisa ser "contain" (nao esticar
+    pra preencher a caixa inteira): o grafico usa margens em PIXELS fixos
+    (ver `alluvial_stack_chart`/`line_evolution_chart` - margin=dict(...)
+    reservado pros rotulos de categoria/conectores a direita, pill de
+    variacao em cima etc.) calibrados pra sua largura/altura originais
+    (760 x fig.layout.height); forcar uma proporcao diferente na
+    renderizacao (ex.: exportar num tamanho que combine com a caixa do
+    slide) faz essas margens ocuparem uma fracao errada da imagem e
+    rotulos/linhas ficam cortados ou fora do lugar."""
+    aspect = img_w_px / img_h_px
+    if box_width / box_height > aspect:
+        height = box_height
+        width = Emu(int(box_height * aspect))
+    else:
+        width = box_width
+        height = Emu(int(box_width / aspect))
+    left = Emu(int(box_left + (box_width - width) / 2))
+    top = Emu(int(box_top + (box_height - height) / 2))
+    return left, top, width, height
+
+
+def _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, rows_data, value_decimals, show_share):
     """Slide com o grafico a esquerda e a tabela (`rows_data`, ja limitada
     ao que cabe) a direita - reproduz o layout da tela."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
     chart_area_width, area_height = _chart_area_size()
-    slide.shapes.add_picture(BytesIO(img_bytes), _MARGIN, _MARGIN, width=chart_area_width, height=area_height)
+    left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _MARGIN, chart_area_width, area_height)
+    slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
 
     table_left = _MARGIN + chart_area_width + _GAP
     table_width = _SLIDE_WIDTH - _MARGIN - table_left
@@ -191,16 +216,20 @@ def build_pptx(
     prs.slide_width = _SLIDE_WIDTH
     prs.slide_height = _SLIDE_HEIGHT
 
-    # renderiza o grafico ja na mesma proporcao da caixa reservada pra ele
-    # no slide 1 - preenche o espaco inteiro, sem letterboxing (fig.layout
-    # width/height do figure interativo nao servem de base: o app zera o
-    # width pra autosize, e o height varia muito - 480 num grafico de
-    # linha, ate 1500 num ranking de 30 categorias - nenhum dos dois bate
-    # com a proporcao fixa da caixa no slide)
-    chart_area_width, chart_area_height = _chart_area_size()
-    img_h_px = 1400
-    img_w_px = int(img_h_px * chart_area_width / chart_area_height)
-    img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=2)
+    # renderiza na proporcao ORIGINAL do grafico (760 - largura padrao dos
+    # dois construtores de grafico em charts.py, sempre usada aqui - x a
+    # altura de verdade, preservada em fig.layout.height mesmo depois do
+    # app zerar fig.layout.width pra autosize) - as margens dos graficos
+    # sao em pixels fixos, calibradas pra essa proporcao especificamente
+    # (rotulos de categoria/conectores a direita, pill de variacao em
+    # cima etc.); exportar numa proporcao diferente (ex.: pra bater com a
+    # caixa do slide) faz as margens ocuparem uma fracao errada da imagem
+    # e rotulos/linhas saem cortados ou fora do lugar - por isso o
+    # encaixe na caixa do slide e "contain" (ver `_picture_box`), nao
+    # esticado
+    img_w_px = 760
+    img_h_px = int(fig.layout.height or 640)
+    img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
 
     header: list[str] = []
     rows_data: list[tuple[str, list]] = []
@@ -226,7 +255,7 @@ def build_pptx(
 
     first_chunk = rows_data[:_ROWS_PER_SIDE_SLIDE]
     rest = rows_data[_ROWS_PER_SIDE_SLIDE:]
-    _add_combo_slide(prs, img_bytes, header, first_chunk, value_decimals, additive)
+    _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, first_chunk, value_decimals, additive)
 
     for start in range(0, len(rest), _ROWS_PER_FULL_SLIDE):
         chunk = rest[start : start + _ROWS_PER_FULL_SLIDE]
