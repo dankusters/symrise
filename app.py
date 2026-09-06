@@ -15,7 +15,7 @@ import re
 
 from dash import Dash, Input, Output, State, dcc, html
 
-from charts import YEARS_DEFAULT, alluvial_stack_chart, compute_values, compute_variations
+from charts import YEARS_DEFAULT, alluvial_stack_chart, compute_values, compute_variations, line_evolution_chart
 from etl import build_dataset
 from insights import generate_insight
 
@@ -53,14 +53,30 @@ ALL_VARIANTES = sorted(df.loc[df["classificacao"] == "Variante", "rotulo"].uniqu
 # eixo independente, tratado a parte)
 FILTER_DEPTH = {"fabricante": 1, "marca": 2, "submarca": 3, "variante": 4}
 
-# indicadores fixos exibidos nas 3 views (ESCOPO.md secao 3, grupo
-# cumulativo/empilhavel); metadados usados por alluvial_stack_chart e
-# generate_insight
-INDICATOR_BLOCKS = ["volume", "unidades", "valor_com_presentes"]
+# indicadores fixos exibidos nas views (ESCOPO.md secao 3): 3 blocos
+# empilhaveis (chart_type="stack", metadados usados por
+# alluvial_stack_chart) + os graficos de linha (chart_type="line", nao
+# cumulativos - ver line_evolution_chart), que entram um de cada vez.
+# "volume" precisa ficar antes de qualquer indicador com `rank_with`
+# nesta lista (ver update_charts: as categorias de "rank_with" so estao
+# disponiveis apos o bloco correspondente ja ter sido processado).
+INDICATOR_BLOCKS = ["volume", "unidades", "valor_com_presentes", "preco_medio_litros"]
 INDICATORS = {
-    "volume": dict(label="Volume", value_scale=1e-6, value_decimals=1, unit_label="milhões de litros", is_percent=False, additive=True),
-    "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=1, unit_label="milhões", is_percent=False, additive=True),
-    "valor_com_presentes": dict(label="Valor com Presentes", value_scale=1e-6, value_decimals=0, unit_label="R$ milhões", is_percent=False, additive=True),
+    "volume": dict(label="Volume", value_scale=1e-6, value_decimals=1, unit_label="milhões de litros", is_percent=False, additive=True, chart_type="stack"),
+    "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=1, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
+    "valor_com_presentes": dict(label="Valor com Presentes", value_scale=1e-6, value_decimals=0, unit_label="R$ milhões", is_percent=False, additive=True, chart_type="stack"),
+    # nao aditivo (preco medio nao se soma entre categorias) - por isso
+    # reaproveita o ranking/categorias ja escolhidas no bloco de Volume
+    # (`rank_with`) em vez de rankear pelo proprio preco (uma marca de
+    # nicho com preco unitario alto poderia "assumir" o topo so por
+    # causa do preco); a mesma ponderacao por Volume (`weight_indicator`)
+    # tambem da o valor da categoria sintetica "Demais outras"/"Outras"
+    # (media ponderada do que sobrou, nunca soma) e a linha tracejada de
+    # media ponderada do grafico
+    "preco_medio_litros": dict(
+        label="Preço Médio (Litros)", value_scale=1.0, value_decimals=1, unit_label="R$/litro",
+        is_percent=False, additive=False, chart_type="line", rank_with="volume", weight_indicator="volume",
+    ),
 }
 
 # indicadores cujo rotulo de unidade alterna entre milhoes/bilhoes
@@ -179,12 +195,53 @@ def _rank_top_n(values_all, other_label="Outras", top_n=_TOP_N, add_other=True):
     return categories, values
 
 
-def discover_top_categories(indicator, dim_col, base_filters, parent_cod, other_label="Outras", top_n=_TOP_N):
+def _weighted_mean(values_all, weight_all, keys, yr):
+    weight_sum = sum(weight_all.get(k, {}).get(yr, 0.0) for k in keys)
+    if not weight_sum:
+        return 0.0
+    return sum(values_all[k][yr] * weight_all.get(k, {}).get(yr, 0.0) for k in keys) / weight_sum
+
+
+def _apply_ranking(values_all, top_n, other_label="Outras", add_other=True, categories_override=None, weight_all=None):
+    """Por padrao (`categories_override=None`), rankeia normalmente (ver
+    `_rank_top_n`). Quando `categories_override` e dado - uma lista de
+    nomes ja rankeada por OUTRO indicador (ex.: um grafico de Preco
+    Medio reaproveitando o ranking de Volume, pra nao deixar uma marca
+    de nicho com preco alto "assumir" o topo so por causa do preco) -
+    usa exatamente essas categorias/ordem em vez de rankear de novo por
+    este indicador. Qualquer categoria da lista que nao seja uma chave
+    real de `values_all` (ex.: "Demais outras", o bucket sintetico
+    "resto do top N" criado pelo OUTRO indicador) tem seu valor
+    recalculado como media ponderada por `weight_all` (tipicamente
+    Volume) do que sobrou fora das categorias mostradas - nunca somada,
+    pois nao faz sentido somar precos medios/indicadores nao aditivos."""
+    if categories_override is None:
+        return _rank_top_n(values_all, other_label, top_n, add_other)
+
+    categories = list(categories_override)
+    leftover_keys = [k for k in values_all if k not in categories]
+    values: dict[str, dict[str, float]] = {}
+    for cat in categories:
+        if cat in values_all:
+            values[cat] = values_all[cat]
+        elif weight_all and leftover_keys:
+            values[cat] = {yr: _weighted_mean(values_all, weight_all, leftover_keys, yr) for yr in YEARS_DEFAULT}
+        else:
+            values[cat] = {yr: 0.0 for yr in YEARS_DEFAULT}
+    return categories, values
+
+
+def discover_top_categories(
+    indicator, dim_col, base_filters, parent_cod, other_label="Outras", top_n=_TOP_N,
+    categories_override=None, weight_indicator=None,
+):
     """Top N filhos diretos de `parent_cod` (ultimo ano) + um grupo
     sintetico com o restante, pra barra sempre fechar o total real."""
     if not parent_cod:
         return [], {}
-    return _rank_top_n(_children_values(indicator, dim_col, base_filters, parent_cod), other_label, top_n)
+    values_all = _children_values(indicator, dim_col, base_filters, parent_cod)
+    weight_all = _children_values(weight_indicator, dim_col, base_filters, parent_cod) if weight_indicator else None
+    return _apply_ranking(values_all, top_n, other_label, categories_override=categories_override, weight_all=weight_all)
 
 
 def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, add):
@@ -368,13 +425,19 @@ def _resolve_unit(key, values, categories, true_totals=None, years=YEARS_DEFAULT
 _EXCLUDE_FROM_RANKING = frozenset({"Outros Fabricante"})
 
 
-def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, indicator_id, top_n=_TOP_N):
+def build_selection(
+    breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, indicator_id, top_n=_TOP_N,
+    categories_override=None, weight_indicator=None,
+):
     """Retorna (categories, dimension, filters, values_override, title,
     true_totals) para a combinacao atual de quebra/filtros/regiao.
     `true_totals` e None exceto em Submarca/Variante, onde e o total real
     (mercado/marca inteiro) usado pra calcular participacao (MS) - o
     grafico so mostra um top N ali, entao a soma das categorias exibidas
-    nao e mais o total de verdade."""
+    nao e mais o total de verdade. `categories_override`/`weight_indicator`:
+    ver `_apply_ranking` - usado por indicadores nao aditivos (ex.: Preco
+    Medio) que reaproveitam o ranking de outro indicador em vez de
+    rankear por si mesmos."""
     crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f)
 
     if breakdown == "segmento":
@@ -390,7 +453,10 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
     if breakdown == "fabricante":
         base_filters = {"regiao": regiao_view, "segmento": segmento_f}
         parent_cod = _fabricante_root_cod(regiao_view, segmento_f)
-        categories, values = discover_top_categories(indicator_id, "fabricante", base_filters, parent_cod)
+        categories, values = discover_top_categories(
+            indicator_id, "fabricante", base_filters, parent_cod,
+            categories_override=categories_override, weight_indicator=weight_indicator,
+        )
         return categories, "fabricante", base_filters, values, f"{crumb} > Fabricantes (top {_TOP_N})", None
 
     # Marca/Submarca/Variante: nao exigem fabricante/marca/submarca fixo -
@@ -404,7 +470,8 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
         else:
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
         values_all = _descend_to_level(indicator_id, "marca", base_filters, start_cod, {"Marca"})
-        categories, values = _rank_top_n(values_all, top_n=top_n)
+        weight_all = _descend_to_level(weight_indicator, "marca", base_filters, start_cod, {"Marca"}) if weight_indicator else None
+        categories, values = _apply_ranking(values_all, top_n, categories_override=categories_override, weight_all=weight_all)
         return categories, "marca", base_filters, values, f"{crumb} > Marcas (top {top_n})", None
 
     if breakdown == "submarca":
@@ -415,7 +482,13 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
         else:
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
         values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Marca"}, _EXCLUDE_FROM_RANKING)
-        categories, values = _rank_top_n(values_all, top_n=top_n, add_other=False)
+        weight_all = (
+            _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Sub Marca"}, _EXCLUDE_FROM_RANKING)
+            if weight_indicator else None
+        )
+        categories, values = _apply_ranking(
+            values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
+        )
         true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
         return categories, "rotulo", base_filters, values, f"{crumb} > Submarcas (top {top_n})", true_totals
 
@@ -429,7 +502,13 @@ def build_selection(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, s
     else:
         start_cod = _fabricante_root_cod(regiao_view, segmento_f)
     values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
-    categories, values = _rank_top_n(values_all, top_n=top_n, add_other=False)
+    weight_all = (
+        _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+        if weight_indicator else None
+    )
+    categories, values = _apply_ranking(
+        values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
+    )
     true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
     return categories, "rotulo", base_filters, values, f"{crumb} > Variantes (top {top_n})", true_totals
 
@@ -718,6 +797,24 @@ def _chart_height(breakdown, categories):
     return max(640, min(1500, 640 + max(0, n - 8) * 35))
 
 
+def _weighted_average(values, weight_values, categories, years=YEARS_DEFAULT):
+    """Media ponderada ano a ano de `values` entre `categories`, usando
+    `weight_values` (tipicamente Volume) como peso - a linha tracejada
+    dos graficos de linha (indicadores nao aditivos, ex.: Preco Medio,
+    onde uma media simples entre categorias ignoraria o tamanho de
+    cada uma)."""
+    result = {}
+    for yr in years:
+        weight_sum = sum(weight_values.get(cat, {}).get(yr, 0.0) for cat in categories)
+        if not weight_sum:
+            result[yr] = None
+            continue
+        result[yr] = sum(
+            values.get(cat, {}).get(yr, 0.0) * weight_values.get(cat, {}).get(yr, 0.0) for cat in categories
+        ) / weight_sum
+    return result
+
+
 @app.callback(
     [Output(f"graph-{key}", "figure") for key in INDICATOR_BLOCKS]
     + [Output(f"variation-table-{key}", "children") for key in INDICATOR_BLOCKS]
@@ -738,10 +835,19 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         top_n = _TOP_N
 
     figs, tables, insights = [], [], []
+    # categorias/valores ja resolvidos de cada bloco, indexado por
+    # indicador - alimenta os blocos com `rank_with`/`weight_indicator`
+    # (ver INDICATORS: "volume" precisa vir antes deles em INDICATOR_BLOCKS)
+    resolved_categories: dict[str, list[str]] = {}
+    resolved_values: dict[str, dict[str, dict[str, float]]] = {}
+
     for key in INDICATOR_BLOCKS:
         cfg = INDICATORS[key]
+        rank_with = cfg.get("rank_with")
         categories, dim_col, filters, values_override, title, true_totals = build_selection(
             breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, key, top_n,
+            categories_override=resolved_categories.get(rank_with) if rank_with else None,
+            weight_indicator=cfg.get("weight_indicator"),
         )
         # resolve os valores uma unica vez (grafico, tabela e insight usam
         # exatamente os mesmos numeros)
@@ -752,28 +858,49 @@ def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         else:
             values = {}
 
-        values, true_totals, unit, decimals_override = _resolve_unit(key, values, categories, true_totals)
-        value_decimals = decimals_override if decimals_override is not None else cfg["value_decimals"]
-        subtitle = f"{cfg['label']} ({unit})" if unit else cfg["label"]
-        # com true_totals (Submarca/Variante = so um recorte top N), o
-        # "total" que apareceria no topo da barra/na variacao do total
-        # seria so a soma do recorte exibido, nao o total real - por
-        # isso o grafico omite os dois nesse caso
-        show_total = true_totals is None
+        resolved_categories[key] = categories
+        resolved_values[key] = values
 
-        fig = alluvial_stack_chart(
-            df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
-            title=title, subtitle=subtitle, values_override=values,
-            value_scale=1.0, value_decimals=value_decimals, is_percent=cfg["is_percent"],
-            show_total=show_total, height=_chart_height(breakdown, categories),
-        )
-        fig.update_layout(autosize=True, width=None)
+        if cfg.get("chart_type") == "line":
+            value_decimals = cfg["value_decimals"]
+            insight_unit_label = cfg["unit_label"]
+            subtitle = f"{cfg['label']} ({cfg['unit_label']})" if cfg["unit_label"] else cfg["label"]
+            weight_key = cfg.get("weight_indicator")
+            weighted_average = (
+                _weighted_average(values, resolved_values.get(weight_key, {}), categories)
+                if weight_key else None
+            )
+            fig = line_evolution_chart(
+                df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
+                title=title, subtitle=subtitle, unit_label=cfg["unit_label"],
+                value_decimals=value_decimals, is_percent=cfg["is_percent"],
+                values_override=values, weighted_average=weighted_average,
+            )
+            fig.update_layout(autosize=True, width=None)
+        else:
+            values, true_totals, unit, decimals_override = _resolve_unit(key, values, categories, true_totals)
+            value_decimals = decimals_override if decimals_override is not None else cfg["value_decimals"]
+            insight_unit_label = unit or cfg["unit_label"]
+            subtitle = f"{cfg['label']} ({unit})" if unit else cfg["label"]
+            # com true_totals (Submarca/Variante = so um recorte top N), o
+            # "total" que apareceria no topo da barra/na variacao do total
+            # seria so a soma do recorte exibido, nao o total real - por
+            # isso o grafico omite os dois nesse caso
+            show_total = true_totals is None
+
+            fig = alluvial_stack_chart(
+                df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
+                title=title, subtitle=subtitle, values_override=values,
+                value_scale=1.0, value_decimals=value_decimals, is_percent=cfg["is_percent"],
+                show_total=show_total, height=_chart_height(breakdown, categories),
+            )
+            fig.update_layout(autosize=True, width=None)
 
         table = _variation_table(categories, values, cfg["additive"], value_decimals, true_totals)
 
         insight = generate_insight(
             df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
-            value_scale=1.0, value_decimals=value_decimals, unit_label=unit or cfg["unit_label"],
+            value_scale=1.0, value_decimals=value_decimals, unit_label=insight_unit_label,
             additive=cfg["additive"], values_override=values, totals_override=true_totals,
         )
         figs.append(fig)

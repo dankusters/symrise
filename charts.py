@@ -486,19 +486,28 @@ def line_evolution_chart(
     height: int = 480,
     width: int = 760,
     values_override: dict[str, dict[str, float]] | None = None,
+    weighted_average: dict[str, float | None] | None = None,
+    weighted_average_label: str = "Média ponderada",
 ) -> go.Figure:
     """Grafico de linha para indicadores nao cumulativos/nao empilhaveis
     (Penetracao, Vol. por Comprador, Frequencia, Preco Medio): uma linha
     por categoria, sem empilhamento, pois sao medias/taxas e nao somas.
     `values_override`: ver docstring de `alluvial_stack_chart`.
+    `weighted_average`: {ano: valor} de uma media ponderada entre as
+    categorias (tipicamente por Volume - ver `app._weighted_average`),
+    desenhada como uma linha tracejada extra pra dar o "resumo" do
+    indicador no periodo (uma media simples entre categorias ignoraria
+    o tamanho de cada uma).
     """
     values = values_override or compute_values(df, indicator, dimension, categories, years, filters)
 
     x_positions = list(range(len(years)))
     fig = go.Figure()
 
-    # rotulo de categoria fica direto ao lado do fim da linha (em vez de
-    # legenda padrao do Plotly), pra nao disputar espaco com o titulo
+    # linha suavizada (spline) com marcador pequeno de preenchimento
+    # branco e borda na cor da categoria - rotulo de categoria fica
+    # direto ao lado do fim da linha (em vez de legenda padrao do
+    # Plotly), pra nao disputar espaco com o titulo
     for cat in categories:
         color = color_fn(cat)
         y_values = [values[cat][yr] for yr in years]
@@ -512,8 +521,8 @@ def line_evolution_chart(
                 text=text,
                 textposition="top center",
                 textfont=dict(color=color, size=11),
-                line=dict(color=color, width=2.5),
-                marker=dict(color=color, size=7),
+                line=dict(color=color, width=2.5, shape="spline", smoothing=0.7),
+                marker=dict(size=6, color="white", line=dict(color=color, width=1.5)),
                 showlegend=False,
             )
         )
@@ -527,6 +536,37 @@ def line_evolution_chart(
             xanchor="left",
             font=dict(color=color, size=11),
         )
+
+    if weighted_average is not None:
+        avg_color = "#666666"
+        y_values = [weighted_average.get(yr) for yr in years]
+        text = [_format_value(v, value_decimals, is_percent) if v is not None else "" for v in y_values]
+        fig.add_trace(
+            go.Scatter(
+                x=x_positions,
+                y=y_values,
+                mode="lines+markers+text",
+                name=weighted_average_label,
+                text=text,
+                textposition="bottom center",
+                textfont=dict(color=avg_color, size=11),
+                line=dict(color=avg_color, width=2, dash="dash", shape="spline", smoothing=0.7),
+                marker=dict(size=5, color="white", line=dict(color=avg_color, width=1.5)),
+                connectgaps=True,
+                showlegend=False,
+            )
+        )
+        if y_values[-1] is not None:
+            fig.add_annotation(
+                x=1.0,
+                xref="paper",
+                xshift=8,
+                y=y_values[-1],
+                text=weighted_average_label,
+                showarrow=False,
+                xanchor="left",
+                font=dict(color=avg_color, size=11),
+            )
 
     subtitle_full = f"{subtitle} ({metric_label})" if subtitle and metric_label else subtitle or metric_label
     header = title if not subtitle_full else f"{title}<br><span style='font-size:13px;color:#666'>{subtitle_full}</span>"
