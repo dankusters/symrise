@@ -646,13 +646,16 @@ def update_variante_options(marca_f):
 
 @app.callback(
     Output("segmento-filter", "disabled"),
+    Output("segmento-filter", "options"),
+    Output("segmento-filter", "value"),
     Output("fabricante-filter", "disabled"),
     Output("marca-filter", "disabled"),
     Output("submarca-filter", "disabled"),
     Output("variante-filter", "disabled"),
     Input("dimension-dropdown", "value"),
+    State("segmento-filter", "value"),
 )
-def update_filters_disabled(breakdown):
+def update_filters_disabled(breakdown, segmento_f):
     # Segmento e um eixo independente da cadeia Fabricante>Marca>Submarca>
     # Variante: so fica desabilitado quando ele proprio e a quebra. Dentro
     # da cadeia, um filtro fica disponivel se for mais raso que a quebra
@@ -669,7 +672,28 @@ def update_filters_disabled(breakdown):
             return False
         return FILTER_DEPTH[name] < FILTER_DEPTH[breakdown]
 
-    return tuple(not enabled(n) for n in ("segmento", "fabricante", "marca", "submarca", "variante"))
+    # Marca/Submarca/Variante nao existem no agregador Segmento="Total" -
+    # a planilha so as detalha dentro de Feminino/Masculino/Infantil/
+    # Unisex (Submarca/Variante nao tem nenhuma linha em "Total"; Marca
+    # ate tem algumas, mas misturadas com totais de fabricante reaproveitados
+    # como "marca" pela descida generica - nao e uma quebra confiavel) -
+    # por isso tira "Total" das opcoes e forca um segmento real
+    if breakdown in TOP_N_BREAKDOWNS:
+        segmento_options = SEGMENTOS
+        segmento_value = segmento_f if segmento_f != "Total" else SEGMENTOS[0]
+    else:
+        segmento_options = SEGMENTO_FILTER_OPTIONS
+        segmento_value = segmento_f
+
+    return (
+        not enabled("segmento"),
+        [{"label": o, "value": o} for o in segmento_options],
+        segmento_value,
+        not enabled("fabricante"),
+        not enabled("marca"),
+        not enabled("submarca"),
+        not enabled("variante"),
+    )
 
 
 @app.callback(
