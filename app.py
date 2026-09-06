@@ -121,6 +121,16 @@ def _children_rows(base_filters, parent_cod):
     return _cod_children(_scope(base_filters), parent_cod)
 
 
+def _display_names(frame, dim_col):
+    """Serie com o nome de exibicao de cada linha: `dim_col`, exceto
+    quando o valor e o literal "Total" - um placeholder de planilha usado
+    em linhas agregadoras reais (ex.: "Importados", cujas colunas
+    fabricante/marca vem ambas como "Total") que nao e o nome de verdade
+    da entidade. Nesses casos usa `rotulo`, que traz o nome correto
+    ("Importados-Cf" etc)."""
+    return frame[dim_col].where(frame[dim_col] != "Total", frame["rotulo"])
+
+
 def _children_values(indicator, dim_col, base_filters, parent_cod):
     """{nome: {ano: valor}} dos filhos diretos de `parent_cod` (ver
     `_children_rows`)."""
@@ -128,12 +138,13 @@ def _children_values(indicator, dim_col, base_filters, parent_cod):
     if subset.empty:
         return {}
     scale = INDICATORS[indicator]["value_scale"]
+    display = _display_names(subset, dim_col)
     return {
         name: {
-            yr: float(subset.loc[subset[dim_col] == name, f"{indicator}_{yr}"].sum()) * scale
+            yr: float(subset.loc[display == name, f"{indicator}_{yr}"].sum()) * scale
             for yr in YEARS_DEFAULT
         }
-        for name in subset[dim_col].unique()
+        for name in display.unique()
     }
 
 
@@ -152,11 +163,19 @@ def _rank_top_n(values_all, other_label="Outras", top_n=_TOP_N, add_other=True):
     values = {name: values_all[name] for name in top_names}
     categories = list(top_names)
     if add_other and len(ranked) > top_n:
-        values[other_label] = {
+        label = other_label
+        if label in values_all:
+            # ja existe uma entidade real com esse nome (ex.: "Outras" e
+            # tambem um fabricante de verdade, o residual de empresas nao
+            # rastreadas documentado no escopo) - o rotulo sintetico do
+            # "resto do ranking" precisa de outro nome pra nao sobrescrever
+            # nem duplicar essa entidade real na lista de categorias
+            label = f"Demais {other_label.lower()}"
+        values[label] = {
             yr: sum(values_all[n][yr] for n in ranked) - sum(values[n][yr] for n in top_names)
             for yr in YEARS_DEFAULT
         }
-        categories.append(other_label)
+        categories.append(label)
     return categories, values
 
 
@@ -180,7 +199,7 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
     at_target = rows["classificacao"].isin(target_classificacoes)
     direct = rows[at_target]
     if not direct.empty:
-        grouped = direct.groupby(dim_col)[year_cols].sum()
+        grouped = direct.assign(_disp=_display_names(direct, dim_col)).groupby("_disp")[year_cols].sum()
         for name, row_sum in zip(grouped.index, grouped.itertuples(index=False)):
             for yr, value in zip(YEARS_DEFAULT, row_sum):
                 add(name, yr, float(value) * scale)
@@ -191,6 +210,8 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
             # folha antes de chegar no nivel alvo (a planilha nao detalha
             # mais fundo aqui) - a propria linha e o que ha pra mostrar
             name = getattr(row, dim_col)
+            if name == "Total":
+                name = getattr(row, "rotulo")
             for yr, col in zip(YEARS_DEFAULT, year_cols):
                 add(name, yr, float(getattr(row, col)) * scale)
 
