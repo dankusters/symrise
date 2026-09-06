@@ -551,9 +551,16 @@ def line_evolution_chart(
             )
         )
         if y_values[-1] is not None:
-            # unica linha com rotulo de valor: "Media ponderada (122.2)"
-            # em vez de um numero por ponto (ver comentario acima)
-            avg_label = f"{weighted_average_label} ({_format_value(y_values[-1], value_decimals, is_percent)})"
+            # unica linha com rotulo de valor + variacao sobre o ano
+            # anterior: "Media ponderada (122.2, +5.3%)" em vez de um
+            # numero por ponto (ver comentario acima)
+            value_text = _format_value(y_values[-1], value_decimals, is_percent)
+            change_pct = pct_change(y_values[-2], y_values[-1]) if len(y_values) >= 2 else None
+            avg_label = (
+                f"{weighted_average_label} ({value_text}, {change_pct:+.1f}%)"
+                if change_pct is not None
+                else f"{weighted_average_label} ({value_text})"
+            )
             fig.add_annotation(
                 x=1.0,
                 xref="paper",
