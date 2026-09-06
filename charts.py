@@ -336,7 +336,7 @@ def alluvial_stack_chart(
                 text=label,
                 showarrow=False,
                 xanchor="center",
-                font=dict(color="white", size=12 if ratio >= 0.08 else 9),
+                font=dict(color="white", size=13 if ratio >= 0.08 else 10),
                 align="center",
             )
 
@@ -352,10 +352,10 @@ def alluvial_stack_chart(
             fig.add_annotation(
                 x=i,
                 y=top[categories[0]][yr] + max_total * 0.04,
-                text=f"<b>{totals[yr]:,.1f}</b>",
+                text=f"<b>{totals[yr]:,.{value_decimals}f}</b>",
                 showarrow=False,
                 xanchor="center",
-                font=dict(color="#222222", size=16),
+                font=dict(color="#222222", size=17),
             )
 
         # variacao % do total, ano a ano: "chave" retangular (bracket) numa
@@ -567,7 +567,7 @@ def line_evolution_chart(
                 text=avg_label,
                 showarrow=False,
                 xanchor="left",
-                font=dict(color=avg_color, size=11),
+                font=dict(color=avg_color, size=12),
             )
 
     subtitle_full = f"{subtitle} ({metric_label})" if subtitle and metric_label else subtitle or metric_label
@@ -582,7 +582,7 @@ def line_evolution_chart(
         # margem direita maior que os outros graficos: o rotulo da media
         # ponderada inclui o valor ("Media ponderada (2,095.1)"), bem mais
         # largo que um nome de categoria sozinho
-        margin=dict(l=60, r=170, t=90, b=50),
+        margin=dict(l=60, r=185, t=90, b=50),
         xaxis=dict(
             tickmode="array",
             tickvals=x_positions,

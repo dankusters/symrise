@@ -63,20 +63,23 @@ FILTER_DEPTH = {"fabricante": 1, "marca": 2, "submarca": 3, "variante": 4}
 # disponiveis apos o bloco correspondente ja ter sido processado).
 INDICATOR_BLOCKS = ["volume", "unidades", "valor_com_presentes", "preco_medio_litros"]
 INDICATORS = {
-    "volume": dict(label="Volume", value_scale=1e-6, value_decimals=1, unit_label="milhões de litros", is_percent=False, additive=True, chart_type="stack"),
-    "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=1, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
-    "valor_com_presentes": dict(label="Valor com Presentes", value_scale=1e-6, value_decimals=0, unit_label="R$ milhões", is_percent=False, additive=True, chart_type="stack"),
+    "volume": dict(label="Volume", value_scale=1e-6, value_decimals=2, unit_label="milhões de litros", is_percent=False, additive=True, chart_type="stack"),
+    "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=2, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
+    "valor_com_presentes": dict(label="Valor com Presentes", value_scale=1e-6, value_decimals=2, unit_label="R$ milhões", is_percent=False, additive=True, chart_type="stack"),
     # nao aditivo (preco medio nao se soma entre categorias) - por isso
     # reaproveita o ranking/categorias ja escolhidas no bloco de Volume
     # (`rank_with`) em vez de rankear pelo proprio preco (uma marca de
     # nicho com preco unitario alto poderia "assumir" o topo so por
-    # causa do preco); a mesma ponderacao por Volume (`weight_indicator`)
-    # tambem da o valor da categoria sintetica "Demais outras"/"Outras"
-    # (media ponderada do que sobrou, nunca soma) e a linha tracejada de
-    # media ponderada do grafico
+    # causa do preco); a ponderacao por Volume (`weight_indicator`) segue
+    # dando o valor da categoria sintetica "Demais outras"/"Outras" (media
+    # ponderada do que sobrou, nunca soma - preco medio nao e aditivo) -
+    # mas a linha tracejada do grafico usa media SIMPLES (`average_mode`),
+    # pra olhar o nivel de preco em si, sem marcas de maior volume vendido
+    # puxarem a media
     "preco_medio_litros": dict(
-        label="Preço Médio (Litros)", value_scale=1.0, value_decimals=1, unit_label="R$/litro",
+        label="Preço Médio (Litros)", value_scale=1.0, value_decimals=2, unit_label="R$/litro",
         is_percent=False, additive=False, chart_type="line", rank_with="volume", weight_indicator="volume",
+        average_mode="simple",
     ),
 }
 
@@ -87,7 +90,7 @@ INDICATORS = {
 # em bilhoes, casas decimais quando em bilhoes)
 DYNAMIC_UNIT = {
     "volume": ("milhões de litros", "bilhões de litros", 2),
-    "valor_com_presentes": ("R$ milhões", "R$ bilhões", 1),
+    "valor_com_presentes": ("R$ milhões", "R$ bilhões", 2),
 }
 _BILLION_THRESHOLD = 1000.0  # valores ja vem em milhoes; 1000 milhoes = 1 bilhao
 
@@ -604,7 +607,7 @@ def _variation_table(categories, values, additive, value_decimals, totals_overri
     ]
     return html.Table(
         [html.Thead(header), html.Tbody(rows)],
-        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "14px"},
+        style={"borderCollapse": "collapse", "width": "100%", "fontSize": "15px"},
     )
 
 
@@ -859,6 +862,19 @@ def _weighted_average(values, weight_values, categories, years=YEARS_DEFAULT):
     return result
 
 
+def _simple_average(values, categories, years=YEARS_DEFAULT):
+    """Media aritmetica simples ano a ano de `values` entre `categories`,
+    sem ponderar por volume/tamanho - usada quando o proprio indicador e
+    um preco/taxa e o objetivo e olhar o nivel de preco em si, sem que
+    categorias de maior volume vendido "puxem" a media (ver
+    `INDICATORS["preco_medio_litros"]["average_mode"]`)."""
+    result = {}
+    for yr in years:
+        vals = [values[cat][yr] for cat in categories if values.get(cat, {}).get(yr) is not None]
+        result[yr] = sum(vals) / len(vals) if vals else None
+    return result
+
+
 def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
     """Monta os dados de cada bloco (grafico + tabela + insight) pra
     combinacao atual de quebra/filtros/regiao - {indicador: dict(...)}.
@@ -903,15 +919,20 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
             insight_unit_label = cfg["unit_label"]
             subtitle = f"{cfg['label']} ({cfg['unit_label']})" if cfg["unit_label"] else cfg["label"]
             weight_key = cfg.get("weight_indicator")
-            weighted_average = (
-                _weighted_average(values, resolved_values.get(weight_key, {}), categories)
-                if weight_key else None
-            )
+            if cfg.get("average_mode") == "simple":
+                weighted_average = _simple_average(values, categories)
+                average_label = "Média simples"
+            elif weight_key:
+                weighted_average = _weighted_average(values, resolved_values.get(weight_key, {}), categories)
+                average_label = "Média ponderada"
+            else:
+                weighted_average = None
+                average_label = "Média ponderada"
             fig = line_evolution_chart(
                 df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
                 title=title, subtitle=subtitle, unit_label=cfg["unit_label"],
                 value_decimals=value_decimals, is_percent=cfg["is_percent"],
-                values_override=values, weighted_average=weighted_average,
+                values_override=values, weighted_average=weighted_average, weighted_average_label=average_label,
             )
             fig.update_layout(autosize=True, width=None)
         else:
