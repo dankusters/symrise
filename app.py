@@ -560,18 +560,15 @@ def _variation_span(value, suffix, nominal_text):
     return html.Div(children, style={"display": "flex"})
 
 
-def _variation_cell(pct, share_pp, nominal, share_value, value_decimals):
+def _variation_cell(pct, share_pp, nominal, share_value, value_decimals, show_share=True):
     nominal_text = f"{nominal:,.{value_decimals}f}" if nominal is not None else None
     share_text = f"{share_value:.1f}%" if share_value is not None else None
-    return html.Td(
-        html.Div(
-            [
-                _variation_span(pct, "%", nominal_text),
-                html.Div(_variation_span(share_pp, "pp", share_text), style={"marginTop": "2px"}),
-            ]
-        ),
-        style=_TABLE_CELL_STYLE,
-    )
+    children = [_variation_span(pct, "%", nominal_text)]
+    # indicadores nao aditivos (ex.: Preco Medio) nao tem participacao de
+    # mercado - a linha de MS ficaria sempre vazia ("-"), so ruido
+    if show_share:
+        children.append(html.Div(_variation_span(share_pp, "pp", share_text), style={"marginTop": "2px"}))
+    return html.Td(html.Div(children), style=_TABLE_CELL_STYLE)
 
 
 def _variation_table(categories, values, additive, value_decimals, totals_override=None):
@@ -597,7 +594,7 @@ def _variation_table(categories, values, additive, value_decimals, totals_overri
                 _variation_cell(
                     variations[cat]["pct"][i], variations[cat]["share_pp"][i],
                     variations[cat]["nominal"][i], variations[cat]["share_value"][i],
-                    value_decimals,
+                    value_decimals, show_share=additive,
                 )
                 for i in range(len(year_pairs))
             ]
