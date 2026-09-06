@@ -15,7 +15,14 @@ import re
 
 from dash import Dash, Input, Output, State, dcc, html
 
-from charts import YEARS_DEFAULT, alluvial_stack_chart, compute_values, compute_variations, line_evolution_chart
+from charts import (
+    YEARS_DEFAULT,
+    alluvial_stack_chart,
+    compute_values,
+    compute_variations,
+    line_evolution_chart,
+    price_unit_waterfall_chart,
+)
 from etl import build_dataset
 from export_pptx import build_pptx
 from insights import generate_insight
@@ -62,6 +69,12 @@ FILTER_DEPTH = {"fabricante": 1, "marca": 2, "submarca": 3, "variante": 4}
 # nesta lista (ver update_charts: as categorias de "rank_with" so estao
 # disponiveis apos o bloco correspondente ja ter sido processado).
 INDICATOR_BLOCKS = ["volume", "unidades", "valor_com_presentes", "preco_medio_litros"]
+
+# aba a parte (nao entra em INDICATOR_BLOCKS/update_charts): um waterfall
+# por categoria em vez de um unico grafico com todas juntas - ver
+# update_waterfall
+PRICE_UNIT_TAB_KEY = "price_unit"
+PRICE_UNIT_TAB_LABEL = "Price/Unit"
 INDICATORS = {
     "volume": dict(label="Volume", value_scale=1e-6, value_decimals=2, unit_label="milhões de litros", is_percent=False, additive=True, chart_type="stack"),
     "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=2, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
@@ -216,9 +229,12 @@ def _apply_ranking(values_all, top_n, other_label="Outras", add_other=True, cate
     este indicador. Qualquer categoria da lista que nao seja uma chave
     real de `values_all` (ex.: "Demais outras", o bucket sintetico
     "resto do top N" criado pelo OUTRO indicador) tem seu valor
-    recalculado como media ponderada por `weight_all` (tipicamente
-    Volume) do que sobrou fora das categorias mostradas - nunca somada,
-    pois nao faz sentido somar precos medios/indicadores nao aditivos."""
+    recalculado a partir do que sobrou fora das categorias mostradas:
+    media ponderada por `weight_all` (tipicamente Volume) quando dado -
+    nunca somada, pois nao faz sentido somar precos medios/indicadores
+    nao aditivos - ou, se `weight_all` nao for dado, a SOMA do que
+    sobrou (correto quando este proprio indicador e aditivo, ex.:
+    Unidades reaproveitando o ranking de Valor com Presentes)."""
     if categories_override is None:
         return _rank_top_n(values_all, other_label, top_n, add_other)
 
@@ -230,6 +246,8 @@ def _apply_ranking(values_all, top_n, other_label="Outras", add_other=True, cate
             values[cat] = values_all[cat]
         elif weight_all and leftover_keys:
             values[cat] = {yr: _weighted_mean(values_all, weight_all, leftover_keys, yr) for yr in YEARS_DEFAULT}
+        elif leftover_keys:
+            values[cat] = {yr: sum(values_all[k][yr] for k in leftover_keys) for yr in YEARS_DEFAULT}
         else:
             values[cat] = {yr: 0.0 for yr in YEARS_DEFAULT}
     return categories, values
@@ -702,7 +720,10 @@ app.layout = html.Div(
         dcc.Tabs(
             id="indicator-tabs",
             value=INDICATOR_BLOCKS[0],
-            children=[dcc.Tab(label=INDICATORS[key]["label"], value=key) for key in INDICATOR_BLOCKS],
+            children=(
+                [dcc.Tab(label=INDICATORS[key]["label"], value=key) for key in INDICATOR_BLOCKS]
+                + [dcc.Tab(label=PRICE_UNIT_TAB_LABEL, value=PRICE_UNIT_TAB_KEY)]
+            ),
             style={"marginBottom": "16px"},
         ),
         dcc.Loading(
@@ -723,21 +744,34 @@ app.layout = html.Div(
                     )
                     for key in INDICATOR_BLOCKS
                 ]
+                + [
+                    html.Div(
+                        id=f"indicator-panel-{PRICE_UNIT_TAB_KEY}",
+                        style={"display": "none"},
+                        children=html.Div(
+                            id="waterfall-container",
+                            style={"display": "flex", "flexWrap": "wrap", "gap": "16px"},
+                        ),
+                    )
+                ]
             ),
         ),
     ],
 )
 
+_ALL_TAB_KEYS = INDICATOR_BLOCKS + [PRICE_UNIT_TAB_KEY]
+
 
 @app.callback(
-    [Output(f"indicator-panel-{key}", "style") for key in INDICATOR_BLOCKS],
+    [Output(f"indicator-panel-{key}", "style") for key in _ALL_TAB_KEYS],
     Input("indicator-tabs", "value"),
 )
 def update_indicator_tabs(active_key):
     # todos os blocos continuam sendo calculados/atualizados normalmente
-    # pelo update_charts (Input de filtro nao muda) - so a visibilidade
-    # troca, entao alternar de aba e instantaneo, sem precisar recarregar
-    return [{"display": "block"} if key == active_key else {"display": "none"} for key in INDICATOR_BLOCKS]
+    # pelo update_charts/update_waterfall (Input de filtro nao muda) - so
+    # a visibilidade troca, entao alternar de aba e instantaneo, sem
+    # precisar recarregar
+    return [{"display": "block"} if key == active_key else {"display": "none"} for key in _ALL_TAB_KEYS]
 
 
 @app.callback(
@@ -1027,6 +1061,73 @@ def _make_export_callback(key):
 
 for _key in INDICATOR_BLOCKS:
     _make_export_callback(_key)
+
+
+@app.callback(
+    Output("waterfall-container", "children"),
+    Input("dimension-dropdown", "value"),
+    Input("regiao-tabs", "value"),
+    Input("segmento-filter", "value"),
+    Input("fabricante-filter", "value"),
+    Input("marca-filter", "value"),
+    Input("submarca-filter", "value"),
+    Input("variante-filter", "value"),
+    Input("top-n-selector", "value"),
+)
+def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+    """Um waterfall por categoria (nao um unico grafico com todas juntas,
+    como os outros 4 blocos): decompoe a variacao ano a ano do Valor com
+    Presentes de cada categoria em efeito Unidades e efeito Preco Medio.
+    Reaproveita o ranking do bloco Valor com Presentes (mesmas categorias
+    que aparecem naquela aba) e busca Unidades para essas mesmas
+    categorias (`categories_override`)."""
+    if not breakdown:
+        breakdown = "segmento"
+    if breakdown not in TOP_N_BREAKDOWNS:
+        top_n = _TOP_N
+
+    categories, dim_col, filters, valor_override, title, _ = build_selection(
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f,
+        "valor_com_presentes", top_n,
+    )
+    if not categories:
+        return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
+
+    if valor_override is not None:
+        valor_values = valor_override
+    else:
+        valor_values = compute_values(
+            df, "valor_com_presentes", dim_col, categories, YEARS_DEFAULT, filters,
+            INDICATORS["valor_com_presentes"]["value_scale"],
+        )
+
+    _, _, _, unidades_override, _, _ = build_selection(
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f,
+        "unidades", top_n, categories_override=categories,
+    )
+    if unidades_override is not None:
+        unidades_values = unidades_override
+    else:
+        unidades_values = compute_values(
+            df, "unidades", dim_col, categories, YEARS_DEFAULT, filters, INDICATORS["unidades"]["value_scale"],
+        )
+
+    # mesma escala dinamica (milhoes/bilhoes) e mesmas casas decimais que
+    # o bloco "Valor com Presentes" usa - reescala valor (e so valor: a
+    # decomposicao Unidades/Preco continua exata pra qualquer fator de
+    # escala uniforme aplicado a valor, ver docstring de
+    # price_unit_waterfall_chart) em vez de um "R$ milhoes" fixo
+    valor_values, _, unit_label, decimals_override = _resolve_unit("valor_com_presentes", valor_values, categories)
+    value_decimals = decimals_override if decimals_override is not None else INDICATORS["valor_com_presentes"]["value_decimals"]
+
+    graphs = []
+    for cat in categories:
+        fig = price_unit_waterfall_chart(
+            f"{title} > {cat}", unidades_values[cat], valor_values[cat],
+            unit_label=unit_label, value_decimals=value_decimals,
+        )
+        graphs.append(dcc.Graph(figure=fig, config={"responsive": False, "displayModeBar": False}))
+    return graphs
 
 
 if __name__ == "__main__":

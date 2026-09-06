@@ -601,3 +601,180 @@ def line_evolution_chart(
         showlegend=False,
     )
     return fig
+
+
+def price_unit_waterfall_chart(
+    title: str,
+    unidades: dict[str, float],
+    valor: dict[str, float],
+    years: tuple[str, ...] = YEARS_DEFAULT,
+    unit_label: str = "R$ milhões",
+    value_decimals: int = 2,
+    height: int = 460,
+    width: int = 760,
+) -> go.Figure:
+    """Waterfall que decompoe a variacao ano a ano do "Valor com
+    Presentes" de uma unica categoria em efeito Unidades (volume
+    vendido) e efeito Preco Medio, dado que Valor = Unidades x Preco.
+    `title` e o breadcrumb completo (ex.: "T. Brasil > Segmentos >
+    Feminino"), no mesmo formato/alinhamento dos outros graficos - ver
+    `build_selection`. O preco usado aqui e DERIVADO (valor/unidades) -
+    nao a coluna "Preco Medio" da planilha, que nao reconcilia exatamente
+    com valor/unidades - e por isso os dois efeitos somam exatamente a
+    variacao real do Valor, sem residuo:
+
+        efeito Unidades (ano N -> N+1) = (unidades[N+1] - unidades[N]) * preco[N]
+        efeito Preco    (ano N -> N+1) = unidades[N+1] * (preco[N+1] - preco[N])
+
+    Uma barra por ano (cinza, valor absoluto) com duas barras de efeito
+    (verde/vermelho) entre cada par de anos - chave com a variacao % do
+    total em cima (igual a `alluvial_stack_chart`) e CAGR do periodo no
+    canto superior direito.
+    """
+    price = {yr: (valor[yr] / unidades[yr] if unidades.get(yr) else 0.0) for yr in years}
+
+    def _year_label(yr: str) -> str:
+        return yr.replace("Y", "")
+
+    x_ticktext = [_year_label(years[0])]
+    measures = ["absolute"]
+    y_values = [valor[years[0]]]
+    bar_text = [f"<b>{valor[years[0]]:,.{value_decimals}f}</b>"]
+
+    # (pct do total, indice da barra-ano inicial, indice da barra-ano
+    # final, valor inicial, valor final) - pra desenhar a chave em cima
+    brackets: list[tuple[float | None, int, int, float, float]] = []
+    for i in range(len(years) - 1):
+        yr0, yr1 = years[i], years[i + 1]
+        base = valor[yr0]
+        unit_effect = (unidades[yr1] - unidades[yr0]) * price[yr0]
+        price_effect = unidades[yr1] * (price[yr1] - price[yr0])
+
+        for label, effect in (("Unidades", unit_effect), ("Preço", price_effect)):
+            x_ticktext.append(label)
+            measures.append("relative")
+            y_values.append(effect)
+            pct_text = f"{effect / base * 100:.1f}%" if base else ""
+            effect_color = _POSITIVE["text"] if effect >= 0 else _NEGATIVE["text"]
+            bar_text.append(
+                f"<span style='font-size:10px;color:{effect_color}'>{pct_text}</span>"
+                f"<br><b>{effect:,.{value_decimals}f}</b>"
+            )
+
+        x_ticktext.append(_year_label(yr1))
+        measures.append("total")
+        y_values.append(valor[yr1])
+        bar_text.append(f"<b>{valor[yr1]:,.{value_decimals}f}</b>")
+
+        total_pct = (valor[yr1] - valor[yr0]) / valor[yr0] * 100 if valor[yr0] else None
+        brackets.append((total_pct, i * 3, i * 3 + 3, valor[yr0], valor[yr1]))
+
+    # eixo x NUMERICO (0..N), com os rotulos de texto so no tickmode -
+    # nao um eixo categorico "de verdade": as linhas/marcadores da chave
+    # (abaixo) usam posicoes fracionarias (ex.: 0.18) que precisam
+    # interpolar nesse mesmo eixo. Misturar um eixo categorico (que so
+    # aceita as strings originais como posicoes) com tracos numericos cria
+    # categorias fantasma pra cada posicao fracionaria, distorcendo tudo.
+    x_positions = list(range(len(x_ticktext)))
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Waterfall(
+            x=x_positions,
+            y=y_values,
+            measure=measures,
+            text=bar_text,
+            textposition="outside",
+            textfont=dict(size=13, family=FONT_FAMILY),
+            increasing=dict(marker=dict(color=_POSITIVE["line"])),
+            decreasing=dict(marker=dict(color=_NEGATIVE["line"])),
+            totals=dict(marker=dict(color="#AFAFAF")),
+            connector=dict(line=dict(color="rgba(150,150,150,0.5)", width=1)),
+            width=0.62,
+            showlegend=False,
+        )
+    )
+
+    max_total = max(valor.values()) if valor else 0
+    pill_y = max_total * 1.24
+    riser_gap = max_total * 0.1
+    junction_dx = 0.18
+    connector_gray = "rgba(128,128,128,0.7)"
+    for pct, i0, i1, y0_val, y1_val in brackets:
+        if pct is None:
+            continue
+        style = _change_style(pct)
+        x_mid = (i0 + i1) / 2
+        x_start = i0 + junction_dx
+        x_end = i1 - junction_dx
+        y0 = y0_val + riser_gap
+        y1 = y1_val + riser_gap
+        fig.add_trace(
+            go.Scatter(
+                x=[x_start, x_start, x_end, x_end],
+                y=[y0, pill_y, pill_y, y1],
+                mode="lines",
+                line=dict(color=connector_gray, width=0.9),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[x_end],
+                y=[y1],
+                mode="markers",
+                marker=dict(symbol="triangle-down", size=6, color=connector_gray),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+        fig.add_annotation(
+            x=x_mid,
+            y=pill_y,
+            text=f"<b>{pct:+.1f}%</b>",
+            showarrow=False,
+            bordercolor=style["line"],
+            borderwidth=1,
+            borderpad=7,
+            bgcolor=style["bg"],
+            font=dict(color=style["text"], size=11),
+        )
+
+    # CAGR do periodo inteiro (primeiro -> ultimo ano), canto superior
+    # direito - igual a referencia do usuario
+    first_val, last_val = valor[years[0]], valor[years[-1]]
+    n_periods = len(years) - 1
+    cagr = (last_val / first_val) ** (1 / n_periods) - 1 if first_val and n_periods else None
+    if cagr is not None:
+        fig.add_annotation(
+            x=1.0, xref="paper", y=1.14, yref="paper",
+            text=f"CAGR = {cagr * 100:+.1f}%",
+            showarrow=False,
+            xanchor="right",
+            bordercolor="#888", borderwidth=1, borderpad=5,
+            bgcolor="white",
+            font=dict(color="#333", size=11),
+        )
+
+    header = title if not unit_label else f"{title}<br><span style='font-size:13px;color:#666'>{unit_label}</span>"
+    fig.update_layout(
+        title=dict(text=header, x=0.02, xanchor="left"),
+        height=height,
+        width=width,
+        font=dict(family=FONT_FAMILY),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(l=50, r=30, t=90, b=40),
+        xaxis=dict(
+            tickmode="array",
+            tickvals=x_positions,
+            ticktext=x_ticktext,
+            showgrid=False,
+            zeroline=False,
+            range=[-0.6, x_positions[-1] + 0.6],
+        ),
+        yaxis=dict(visible=False, range=[0, pill_y * 1.15]),
+        showlegend=False,
+    )
+    return fig
