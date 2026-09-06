@@ -525,8 +525,7 @@ def line_evolution_chart(
             )
         )
         fig.add_annotation(
-            x=1.0,
-            xref="paper",
+            x=x_positions[-1],
             xshift=8,
             y=y_values[-1],
             text=cat,
@@ -562,8 +561,7 @@ def line_evolution_chart(
                 else f"{weighted_average_label} ({value_text})"
             )
             fig.add_annotation(
-                x=1.0,
-                xref="paper",
+                x=x_positions[-1],
                 xshift=8,
                 y=y_values[-1],
                 text=avg_label,
