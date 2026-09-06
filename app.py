@@ -1127,12 +1127,13 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     # price_unit_waterfall_chart) em vez de um "R$ milhoes" fixo
     valor_values, _, unit_label, decimals_override = _resolve_unit("valor_com_presentes", valor_values, categories)
     value_decimals = decimals_override if decimals_override is not None else INDICATORS["valor_com_presentes"]["value_decimals"]
+    subtitle = f"{INDICATORS['valor_com_presentes']['label']} em {unit_label}"
 
     result = []
     for cat in categories:
         fig = price_unit_waterfall_chart(
             f"{title} > {cat}", unidades_values[cat], valor_values[cat],
-            unit_label=unit_label, value_decimals=value_decimals,
+            unit_label=subtitle, value_decimals=value_decimals,
         )
         insight = generate_price_unit_insight(unidades_values[cat], valor_values[cat])
         result.append(dict(cat=cat, fig=fig, insight=insight))
