@@ -505,22 +505,20 @@ def line_evolution_chart(
     fig = go.Figure()
 
     # linha suavizada (spline) com marcador pequeno de preenchimento
-    # branco e borda na cor da categoria - rotulo de categoria fica
-    # direto ao lado do fim da linha (em vez de legenda padrao do
-    # Plotly), pra nao disputar espaco com o titulo
+    # branco e borda na cor da categoria - sem rotulo de valor por ponto
+    # (a tabela ao lado ja traz esses numeros; com muitas categorias os
+    # rotulos se sobrepunham nas linhas). O nome da categoria fica direto
+    # ao lado do fim da linha (em vez de legenda padrao do Plotly), pra
+    # nao disputar espaco com o titulo.
     for cat in categories:
         color = color_fn(cat)
         y_values = [values[cat][yr] for yr in years]
-        text = [_format_value(v, value_decimals, is_percent) for v in y_values]
         fig.add_trace(
             go.Scatter(
                 x=x_positions,
                 y=y_values,
-                mode="lines+markers+text",
+                mode="lines+markers",
                 name=cat,
-                text=text,
-                textposition="top center",
-                textfont=dict(color=color, size=11),
                 line=dict(color=color, width=2.5, shape="spline", smoothing=0.7),
                 marker=dict(size=6, color="white", line=dict(color=color, width=1.5)),
                 showlegend=False,
@@ -540,16 +538,12 @@ def line_evolution_chart(
     if weighted_average is not None:
         avg_color = "#666666"
         y_values = [weighted_average.get(yr) for yr in years]
-        text = [_format_value(v, value_decimals, is_percent) if v is not None else "" for v in y_values]
         fig.add_trace(
             go.Scatter(
                 x=x_positions,
                 y=y_values,
-                mode="lines+markers+text",
+                mode="lines+markers",
                 name=weighted_average_label,
-                text=text,
-                textposition="bottom center",
-                textfont=dict(color=avg_color, size=11),
                 line=dict(color=avg_color, width=2, dash="dash", shape="spline", smoothing=0.7),
                 marker=dict(size=5, color="white", line=dict(color=avg_color, width=1.5)),
                 connectgaps=True,
@@ -557,12 +551,15 @@ def line_evolution_chart(
             )
         )
         if y_values[-1] is not None:
+            # unica linha com rotulo de valor: "Media ponderada (122.2)"
+            # em vez de um numero por ponto (ver comentario acima)
+            avg_label = f"{weighted_average_label} ({_format_value(y_values[-1], value_decimals, is_percent)})"
             fig.add_annotation(
                 x=1.0,
                 xref="paper",
                 xshift=8,
                 y=y_values[-1],
-                text=weighted_average_label,
+                text=avg_label,
                 showarrow=False,
                 xanchor="left",
                 font=dict(color=avg_color, size=11),
@@ -577,7 +574,10 @@ def line_evolution_chart(
         font=dict(family=FONT_FAMILY),
         plot_bgcolor="white",
         paper_bgcolor="white",
-        margin=dict(l=60, r=90, t=90, b=50),
+        # margem direita maior que os outros graficos: o rotulo da media
+        # ponderada inclui o valor ("Media ponderada (2,095.1)"), bem mais
+        # largo que um nome de categoria sozinho
+        margin=dict(l=60, r=170, t=90, b=50),
         xaxis=dict(
             tickmode="array",
             tickvals=x_positions,
