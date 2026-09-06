@@ -705,7 +705,12 @@ app.layout = html.Div(
         dcc.Loading(
             type="circle",
             fullscreen=True,
-            overlay_style={"visibility": "visible", "opacity": 0.4, "backgroundColor": "white"},
+            # escuro (nao branco): um overlay branco translucido sobre o
+            # fundo branco do dashboard quase some o conteudo, dando a
+            # impressao de pagina em branco/quebrada - escuro cria
+            # contraste visivel e fica claro que e so um dimmer, com o
+            # dashboard ainda perceptivel por baixo
+            overlay_style={"visibility": "visible", "opacity": 0.5, "backgroundColor": "#1a1a1a"},
             children=html.Div(
                 children=[
                     html.Div(

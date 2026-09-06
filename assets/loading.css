@@ -1,0 +1,10 @@
+/* dcc.Loading com fullscreen=True usa a classe .dash-spinner-container
+   pro overlay que cobre a tela inteira - o fundo dela vem hardcoded em
+   branco opaco pelo proprio Dash, ignorando a prop `overlay_style` do
+   componente (essa prop estiliza um elemento interno, nao esse). Um
+   branco opaco por cima do fundo branco do dashboard da a impressao de
+   pagina em branco/quebrada; escuro e translucido deixa claro que e so
+   um overlay de carregamento, com o dashboard ainda visivel por baixo. */
+.dash-spinner-container {
+    background-color: rgba(26, 26, 26, 0.5) !important;
+}
