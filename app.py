@@ -24,7 +24,7 @@ from charts import (
     price_unit_waterfall_chart,
 )
 from etl import build_dataset
-from export_pptx import build_price_unit_pptx, build_pptx
+from export_pptx import TABLE_LEGEND_NO_SHARE, TABLE_LEGEND_WITH_SHARE, build_price_unit_pptx, build_pptx
 from insights import generate_insight, generate_price_unit_insight
 
 df = build_dataset()
@@ -60,6 +60,19 @@ ALL_VARIANTES = sorted(df.loc[df["classificacao"] == "Variante", "rotulo"].uniqu
 # decidir quais filtros ficam habilitados pra cada quebra (Segmento e um
 # eixo independente, tratado a parte)
 FILTER_DEPTH = {"fabricante": 1, "marca": 2, "submarca": 3, "variante": 4}
+
+# quebras derivadas das arvores "T. Embalagem" (cod '3': Refil/Nao
+# Refil) e "T. Conteudos" (cod '4': faixas de volume da embalagem) -
+# filhas diretas de T. Perfumaria (cod '1'), paralelas a Segmento (cod
+# '2'/'6') e Fabricante (cod '5'). Nao documentadas no ESCOPO.md;
+# descobertas direto na planilha - as 135 linhas dessas duas arvores tem
+# SEMPRE Segmento=Fabricante=Marca="Total": so combinam com Regiao,
+# nunca com as demais dimensoes (ver conversa com o usuario). Cada
+# entrada: (cod pai, rotulo do "Quebra por").
+EMBALAGEM_BREAKDOWNS = {
+    "embalagem_tipo": ("3", "Embalagem (Tipo)"),
+    "embalagem_conteudo": ("4", "Embalagem (Conteúdo)"),
+}
 
 # indicadores fixos exibidos nas views (ESCOPO.md secao 3): 3 blocos
 # empilhaveis (chart_type="stack", metadados usados por
@@ -414,6 +427,29 @@ def _segmento_root_values(regiao_view, indicator):
     return {seg: values_all.get(seg, zeros) for seg in SEGMENTOS}
 
 
+def _embalagem_values(regiao_view, indicator, parent_cod):
+    """{nome: {ano: valor}} dos filhos diretos de `parent_cod` ('3' =
+    Refil/Nao Refil, '4' = faixas de ml - ver EMBALAGEM_BREAKDOWNS), no
+    unico escopo em que essas arvores existem na planilha (Segmento/
+    Fabricante/Marca = 'Total'). Ordenado pelo sufixo numerico do Cod.
+    (nao pelo valor do indicador, ao contrario de discover_top_categories):
+    preserva a ordem natural da planilha (ex.: faixas de ml crescentes)
+    em vez de um ranking por tamanho."""
+    base_filters = {"regiao": regiao_view, "segmento": "Total", "classificacao": "Total", "fabricante": "Total", "marca": "Total"}
+    rows = _children_rows(base_filters, parent_cod)
+    if rows.empty:
+        return [], {}
+    order = rows["cod"].str.rsplit(".", n=1).str[-1].astype(int)
+    rows = rows.assign(_ord=order).sort_values("_ord")
+    scale = INDICATORS[indicator]["value_scale"]
+    categories = rows["rotulo"].tolist()
+    values = {
+        row.rotulo: {yr: float(getattr(row, f"{indicator}_{yr}")) * scale for yr in YEARS_DEFAULT}
+        for row in rows.itertuples()
+    }
+    return categories, values
+
+
 def _resolve_unit(key, values, categories, true_totals=None, years=YEARS_DEFAULT):
     """Se `key` tiver unidade dinamica (ver DYNAMIC_UNIT) e o maior total
     passar de 1 bilhao, reescala `values` (e `true_totals`, se dado) pra
@@ -460,6 +496,15 @@ def build_selection(
     ver `_apply_ranking` - usado por indicadores nao aditivos (ex.: Preco
     Medio) que reaproveitam o ranking de outro indicador em vez de
     rankear por si mesmos."""
+    if breakdown in EMBALAGEM_BREAKDOWNS:
+        # Segmento/Fabricante/Marca/Submarca/Variante nao existem pra
+        # essas duas arvores (ver EMBALAGEM_BREAKDOWNS) - ignora os
+        # filtros recebidos (a UI ja os fixa em "Total"/desabilita) e
+        # nao usa `_breadcrumb`, que so faria sentido com eles
+        parent_cod, label = EMBALAGEM_BREAKDOWNS[breakdown]
+        categories, values = _embalagem_values(regiao_view, indicator_id, parent_cod)
+        return categories, "rotulo", {}, values, f"{regiao_view} > {label}", None
+
     crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f)
 
     if breakdown == "segmento":
@@ -630,6 +675,7 @@ def _variation_table(categories, values, additive, value_decimals, totals_overri
 
 
 def _chart_block(key):
+    legend_text = TABLE_LEGEND_WITH_SHARE if INDICATORS[key]["additive"] else TABLE_LEGEND_NO_SHARE
     return html.Div(
         style={"marginBottom": "40px"},
         children=[
@@ -656,7 +702,13 @@ def _chart_block(key):
                         config={"responsive": True, "displayModeBar": False},
                         style={"flex": "5", "minWidth": "420px"},
                     ),
-                    html.Div(id=f"variation-table-{key}", style={"flex": "4", "minWidth": "420px", "paddingTop": "60px"}),
+                    html.Div(
+                        style={"flex": "4", "minWidth": "420px"},
+                        children=[
+                            html.Div(id=f"variation-table-{key}", style={"paddingTop": "60px"}),
+                            html.P(legend_text, style={"margin": "6px 0 0", "fontSize": "11px", "lineHeight": "1.4", "color": "#888"}),
+                        ],
+                    ),
                 ],
             ),
             html.Div(
@@ -687,6 +739,8 @@ app.layout = html.Div(
                         {"label": "Marca", "value": "marca"},
                         {"label": "Submarca", "value": "submarca"},
                         {"label": "Variante", "value": "variante"},
+                        {"label": "Embalagem (Tipo)", "value": "embalagem_tipo"},
+                        {"label": "Embalagem (Conteúdo)", "value": "embalagem_conteudo"},
                     ],
                     value="segmento",
                     clearable=False,
@@ -826,21 +880,29 @@ def update_variante_options(marca_f):
     Output("segmento-filter", "options"),
     Output("segmento-filter", "value"),
     Output("fabricante-filter", "disabled"),
+    Output("fabricante-filter", "value"),
     Output("marca-filter", "disabled"),
     Output("submarca-filter", "disabled"),
     Output("variante-filter", "disabled"),
     Input("dimension-dropdown", "value"),
     State("segmento-filter", "value"),
+    State("fabricante-filter", "value"),
 )
-def update_filters_disabled(breakdown, segmento_f):
+def update_filters_disabled(breakdown, segmento_f, fabricante_f):
     # Segmento e um eixo independente da cadeia Fabricante>Marca>Submarca>
     # Variante: so fica desabilitado quando ele proprio e a quebra. Dentro
     # da cadeia, um filtro fica disponivel se for mais raso que a quebra
     # ativa (ancestral dela) ou se a quebra for Segmento (a cadeia toda
     # vira filtro); a propria quebra e os niveis mais fundos ficam
     # desabilitados (nao faz sentido fixar Submarca enquanto quebra por
-    # Marca, por exemplo).
+    # Marca, por exemplo). Embalagem (Tipo/Conteudo) so combina com
+    # Regiao (ver EMBALAGEM_BREAKDOWNS): desabilita a cadeia inteira e
+    # Segmento juntos, sem excecao.
+    is_embalagem = breakdown in EMBALAGEM_BREAKDOWNS
+
     def enabled(name):
+        if is_embalagem:
+            return False
         if name == "segmento":
             return breakdown != "segmento"
         if breakdown == "segmento":
@@ -858,15 +920,28 @@ def update_filters_disabled(breakdown, segmento_f):
     if breakdown in TOP_N_BREAKDOWNS:
         segmento_options = SEGMENTOS
         segmento_value = segmento_f if segmento_f != "Total" else SEGMENTOS[0]
+    elif is_embalagem:
+        segmento_options = SEGMENTO_FILTER_OPTIONS
+        segmento_value = "Total"
     else:
         segmento_options = SEGMENTO_FILTER_OPTIONS
         segmento_value = segmento_f
+
+    # forca Fabricante de volta pra "Total" ao entrar em Embalagem - o
+    # proprio valor "congelado" (filtro desabilitado) seria enganoso no
+    # breadcrumb/insight, sugerindo um recorte que a quebra ignora por
+    # completo. O reset cascateia sozinho pra Marca/Submarca/Variante via
+    # update_marca_options/update_submarca_options/update_variante_options
+    # (ja escutam mudanca de Fabricante/Marca), sem precisar de mais
+    # Outputs aqui (evitaria erro de "duplicate callback output").
+    fabricante_value = "Total" if is_embalagem else fabricante_f
 
     return (
         not enabled("segmento"),
         [{"label": o, "value": o} for o in segmento_options],
         segmento_value,
         not enabled("fabricante"),
+        fabricante_value,
         not enabled("marca"),
         not enabled("submarca"),
         not enabled("variante"),
@@ -889,7 +964,7 @@ def _chart_height(breakdown, categories):
     unica coluna - a altura padrao (640px) nao da espaco suficiente pros
     rotulos de cada uma sem sobrepor perto da base da pilha. Cresce com o
     numero de categorias realmente exibidas, so pra essas 3 quebras."""
-    if breakdown not in TOP_N_BREAKDOWNS:
+    if breakdown not in TOP_N_BREAKDOWNS and breakdown != "embalagem_conteudo":
         return 640
     n = len(categories)
     return max(640, min(1500, 640 + max(0, n - 8) * 35))
@@ -1067,8 +1142,14 @@ def _make_export_callback(key):
             breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
         )
         b = blocks[key]
+        insight = generate_insight(
+            df, indicator=key, dimension=b["dim_col"], categories=b["categories"], filters=b["filters"],
+            value_scale=1.0, value_decimals=b["value_decimals"], unit_label=b["insight_unit_label"],
+            additive=b["cfg"]["additive"], values_override=b["values"], totals_override=b["true_totals"],
+        )
         pptx_bytes = build_pptx(
             b["fig"], b["categories"], b["values"], b["cfg"]["additive"], b["value_decimals"], b["true_totals"],
+            highlight_text=insight,
         )
         filename = f"{INDICATORS[key]['label'].replace(' ', '_')}.pptx"
         return dcc.send_bytes(pptx_bytes, filename)

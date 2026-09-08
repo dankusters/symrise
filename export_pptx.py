@@ -34,17 +34,76 @@ _GAP = Inches(0.3)
 # tela (5/9 =~ 0.556)
 _CHART_WIDTH_FRACTION = 5 / 9
 
-# menos linhas por slide quando a tabela divide espaco com o grafico
-# (coluna bem mais estreita que a tabela em tela cheia); nos slides de
-# continuacao (so tabela, largura inteira) cabem mais
-_ROWS_PER_SIDE_SLIDE = 9
-_ROWS_PER_FULL_SLIDE = 15
+# "scale to fit": tamanho de fonte/margem da tabela em tamanho CHEIO
+# (poucas linhas, cabe sem encolher) - diferente pro slide combinado
+# (tabela divide espaco com o grafico, coluna mais estreita) e pro
+# slide de continuacao (so tabela, largura inteira) - mesmos valores
+# que o codigo ja usava antes de existir o scale-to-fit, agora so o
+# TETO em vez de fixo.
+_COMBO_HEADER_FONT_MAX = 10.0
+_COMBO_BODY_FONT_MAX = 9.0
+_FULL_HEADER_FONT_MAX = 12.0
+_FULL_BODY_FONT_MAX = 11.0
+_ROW_MARGIN_MAX = 2.0  # pt, margem topo/base de cada celula em tamanho cheio
+
+# altura de linha aproximada, como multiplo do tamanho da fonte (o
+# formato de tabela do pptx nao expoe medida de texto de verdade -
+# 1.28 e uma estimativa razoavel pra fontes sans-serif comuns)
+_TABLE_LINE_HEIGHT_MULT = 1.28
+
+# nao encolhe fonte/margem alem deste fator do tamanho cheio (~55%,
+# ficaria ilegivel abaixo disso) - o que nao couber nem no piso
+# transborda pro slide de continuacao seguinte
+_TABLE_SCALE_FLOOR = 0.55
+
+
+def _fit_table(n_rows, area_height, show_share, header_font_max, body_font_max):
+    """"Scale to fit": fonte/margem da tabela pra caber as `n_rows`
+    linhas de dados (+ cabecalho) em `area_height` (EMU) num UNICO
+    slide - comeca no tamanho cheio (`header_font_max`/`body_font_max`)
+    e encolhe fonte+margem junto (mesma escala pros dois), proporcional
+    ao excesso de linhas, ate `_TABLE_SCALE_FLOOR`. Estima a altura
+    necessaria linearmente a partir do tamanho da fonte (ver
+    `_TABLE_LINE_HEIGHT_MULT`), sem medir texto de verdade - aproximado,
+    mas evita tanto o corte cego em N linhas fixas (que nao sabia se
+    cabia mais ou menos que isso) quanto o excesso reduzir a fonte
+    quando na verdade cabia inteiro em tamanho cheio.
+
+    Se nem no piso tudo couber, retorna quantas linhas cabem nesse piso -
+    o resto e responsabilidade do chamador (mais um slide, ver
+    `build_pptx`). Retorna (header_font_pt, body_font_pt, margin_pt,
+    rows_that_fit)."""
+    area_pt = area_height / 12700  # EMU -> pt (1pt = 12700 EMU)
+    lines_per_row = 2 if show_share else 1
+    # altura necessaria(s) = k_total * s (linear na escala s, antes de
+    # bater nos pisos - por isso da pra resolver s direto por divisao)
+    k_header = header_font_max * _TABLE_LINE_HEIGHT_MULT + 2 * _ROW_MARGIN_MAX
+    k_row = lines_per_row * body_font_max * _TABLE_LINE_HEIGHT_MULT + 2 * _ROW_MARGIN_MAX
+    k_total = k_header + n_rows * k_row
+
+    scale = min(1.0, area_pt / k_total) if k_total else 1.0
+    rows_that_fit = n_rows
+    if scale < _TABLE_SCALE_FLOOR:
+        scale = _TABLE_SCALE_FLOOR
+        usable = area_pt / scale - k_header
+        rows_that_fit = max(1, min(n_rows, int(usable // k_row))) if k_row else n_rows
+
+    return header_font_max * scale, body_font_max * scale, _ROW_MARGIN_MAX * scale, rows_that_fit
 
 _POSITIVE_RGB = RGBColor(0x1E, 0x8E, 0x5A)
 _NEGATIVE_RGB = RGBColor(0xC2, 0x3B, 0x3B)
 _NOMINAL_RGB = RGBColor(0x33, 0x33, 0x33)
 _MUTED_RGB = RGBColor(0xAA, 0xAA, 0xAA)
 _HEADER_RGB = RGBColor(0x22, 0x22, 0x22)
+
+# legenda da tabela de variacao, reaproveitada tanto na tela (app.py)
+# quanto aqui no PowerPoint - fonte unica pra nao duplicar a redacao.
+# Duas versoes: com participacao (indicadores aditivos, ver
+# INDICATORS[...]["additive"] em app.py - a 2a linha de cada celula e a
+# variacao de MS) e sem (ex.: Preco Medio, onde MS nao faz sentido e a
+# celula so tem a 1a linha).
+TABLE_LEGEND_WITH_SHARE = "1º número: variação % do indicador • 2º número: variação da participação (share) no total, em p.p."
+TABLE_LEGEND_NO_SHARE = "Número: variação % do indicador no período."
 
 
 def _add_variation_paragraph(paragraph, value, suffix, nominal_text, font_size):
@@ -85,10 +144,13 @@ _HEADER_FILL_RGB = RGBColor(0xF5, 0xF5, 0xF5)
 _BODY_FILL_RGB = RGBColor(0xFF, 0xFF, 0xFF)
 
 
-def _style_table_plain(table, n_rows, n_cols):
+def _style_table_plain(table, n_rows, n_cols, margin_pt=2.0):
     """Remove o banding/tema colorido padrao do PowerPoint pra tabela (fundo
     branco, cabecalho cinza bem claro) - o estilo padrao (faixas azuis
-    alternadas) nao existe na tabela HTML da tela."""
+    alternadas) nao existe na tabela HTML da tela. `margin_pt` (topo/base
+    de cada celula) encolhe junto com a fonte no scale-to-fit (ver
+    `_fit_table`) - a margem esquerda/direita fica fixa, so a vertical
+    conta pra altura da linha."""
     table.first_row = False
     table.horz_banding = False
     for i in range(n_rows):
@@ -98,8 +160,8 @@ def _style_table_plain(table, n_rows, n_cols):
             cell.fill.fore_color.rgb = _HEADER_FILL_RGB if i == 0 else _BODY_FILL_RGB
             cell.margin_left = Pt(4)
             cell.margin_right = Pt(4)
-            cell.margin_top = Pt(2)
-            cell.margin_bottom = Pt(2)
+            cell.margin_top = Pt(margin_pt)
+            cell.margin_bottom = Pt(margin_pt)
             cell.vertical_anchor = MSO_ANCHOR.MIDDLE
 
 
@@ -165,43 +227,128 @@ def _picture_box(img_w_px, img_h_px, box_left, box_top, box_width, box_height):
     return left, top, width, height
 
 
-def _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, rows_data, value_decimals, show_share):
-    """Slide com o grafico a esquerda e a tabela (`rows_data`, ja limitada
-    ao que cabe) a direita - reproduz o layout da tela."""
+_HIGHLIGHT_BLOCK_HEIGHT = Inches(1.3)
+_HIGHLIGHT_GAP = Inches(0.15)
+
+# faixa reservada pra legenda da tabela (ver TABLE_LEGEND_WITH_SHARE/
+# TABLE_LEGEND_NO_SHARE), logo abaixo da tabela - so na coluna da
+# tabela, nao full-width (o grafico ao lado nao tem legenda)
+_LEGEND_STRIP_HEIGHT = Inches(0.28)
+_LEGEND_GAP = Inches(0.05)
+
+
+def _add_table_legend(slide, left, top, width, legend_text):
+    txbox = slide.shapes.add_textbox(left, top, width, _LEGEND_STRIP_HEIGHT)
+    tf = txbox.text_frame
+    tf.word_wrap = True
+    run = tf.paragraphs[0].add_run()
+    run.text = legend_text
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+
+
+def _add_highlight_textbox(slide, top, height, highlight_text):
+    """Caixa de texto "Highlights" de largura cheia, abaixo do grafico/
+    tabela - mesma posicao relativa (chart+tabela em cima, highlight
+    embaixo) do bloco na tela (`app._chart_block`)."""
+    text_width = _SLIDE_WIDTH - 2 * _MARGIN
+    txbox = slide.shapes.add_textbox(_MARGIN, top, text_width, height)
+    tf = txbox.text_frame
+    tf.word_wrap = True
+
+    heading_run = tf.paragraphs[0].add_run()
+    heading_run.text = "Highlights"
+    heading_run.font.bold = True
+    heading_run.font.size = Pt(14)
+    heading_run.font.color.rgb = _HEADER_RGB
+
+    body_p = tf.add_paragraph()
+    body_p.space_before = Pt(4)
+    body_run = body_p.add_run()
+    body_run.text = highlight_text
+    body_run.font.size = Pt(12)
+    body_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+
+def _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, rows_data, value_decimals, show_share, highlight_text=None):
+    """Slide com o grafico a esquerda e a tabela a direita - reproduz o
+    layout da tela. Se `highlight_text` for passado, reserva uma faixa
+    full-width embaixo pro texto de Highlights (mesma posicao relativa
+    da tela). A tabela encolhe fonte/margem pra tentar caber `rows_data`
+    inteira (scale-to-fit, ver `_fit_table`); o que nem assim couber e
+    devolvido pro chamador colocar num slide de continuacao."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-    chart_area_width, area_height = _chart_area_size()
+    chart_area_width, full_area_height = _chart_area_size()
+    if highlight_text:
+        area_height = Emu(int(full_area_height - _HIGHLIGHT_BLOCK_HEIGHT - _HIGHLIGHT_GAP))
+    else:
+        area_height = full_area_height
+
     left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _MARGIN, chart_area_width, area_height)
     slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
 
     table_left = _MARGIN + chart_area_width + _GAP
     table_width = _SLIDE_WIDTH - _MARGIN - table_left
-    n_rows = len(rows_data) + 1
+    # a legenda fica so na coluna da tabela (o grafico ao lado nao tem
+    # legenda) - reduz a altura disponivel pra tabela, nao pro grafico
+    table_area_height = Emu(int(area_height - _LEGEND_STRIP_HEIGHT - _LEGEND_GAP))
+
+    header_font, body_font, margin_pt, rows_that_fit = _fit_table(
+        len(rows_data), table_area_height, show_share, _COMBO_HEADER_FONT_MAX, _COMBO_BODY_FONT_MAX,
+    )
+    shown_rows, overflow_rows = rows_data[:rows_that_fit], rows_data[rows_that_fit:]
+
+    n_rows = len(shown_rows) + 1
     n_cols = len(header)
-    graphic_frame = slide.shapes.add_table(n_rows, n_cols, table_left, _MARGIN, table_width, area_height)
+    graphic_frame = slide.shapes.add_table(n_rows, n_cols, table_left, _MARGIN, table_width, table_area_height)
     table = graphic_frame.table
-    _style_table_plain(table, n_rows, n_cols)
+    _style_table_plain(table, n_rows, n_cols, margin_pt)
     for i, col_width in enumerate(_col_widths(table_width, n_cols - 1, Inches(1.35))):
         table.columns[i].width = col_width
-    _fill_table(table, header, rows_data, value_decimals, show_share, Pt(10), Pt(9))
-    return slide
+    _fill_table(table, header, shown_rows, value_decimals, show_share, Pt(header_font), Pt(body_font))
+
+    legend_top = Emu(int(_MARGIN + table_area_height + _LEGEND_GAP))
+    legend_text = TABLE_LEGEND_WITH_SHARE if show_share else TABLE_LEGEND_NO_SHARE
+    _add_table_legend(slide, table_left, legend_top, table_width, legend_text)
+
+    if highlight_text:
+        text_top = Emu(int(_MARGIN + area_height + _HIGHLIGHT_GAP))
+        _add_highlight_textbox(slide, text_top, _HIGHLIGHT_BLOCK_HEIGHT, highlight_text)
+    return slide, overflow_rows
 
 
 def _add_table_slide(prs, header, rows_data, value_decimals, show_share):
     """Slide de continuacao (so tabela, largura cheia) pro que nao coube
-    no slide 1 junto com o grafico."""
+    no slide 1 junto com o grafico - mesmo scale-to-fit de
+    `_add_combo_slide` (teto de fonte maior, ver `_FULL_HEADER_FONT_MAX`/
+    `_FULL_BODY_FONT_MAX`: mais espaco por ter a largura toda so pra
+    tabela). O que nem assim couber e devolvido pro chamador colocar em
+    MAIS um slide de continuacao (`build_pptx` chama em loop ate
+    esvaziar)."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    n_rows = len(rows_data) + 1
-    n_cols = len(header)
     width = _SLIDE_WIDTH - 2 * _MARGIN
-    height = _SLIDE_HEIGHT - 2 * _MARGIN
-    graphic_frame = slide.shapes.add_table(n_rows, n_cols, _MARGIN, _MARGIN, width, height)
+    full_area_height = _SLIDE_HEIGHT - 2 * _MARGIN
+    table_area_height = Emu(int(full_area_height - _LEGEND_STRIP_HEIGHT - _LEGEND_GAP))
+
+    header_font, body_font, margin_pt, rows_that_fit = _fit_table(
+        len(rows_data), table_area_height, show_share, _FULL_HEADER_FONT_MAX, _FULL_BODY_FONT_MAX,
+    )
+    shown_rows, overflow_rows = rows_data[:rows_that_fit], rows_data[rows_that_fit:]
+
+    n_rows = len(shown_rows) + 1
+    n_cols = len(header)
+    graphic_frame = slide.shapes.add_table(n_rows, n_cols, _MARGIN, _MARGIN, width, table_area_height)
     table = graphic_frame.table
-    _style_table_plain(table, n_rows, n_cols)
+    _style_table_plain(table, n_rows, n_cols, margin_pt)
     for i, col_width in enumerate(_col_widths(width, n_cols - 1, Inches(2.8))):
         table.columns[i].width = col_width
-    _fill_table(table, header, rows_data, value_decimals, show_share, Pt(12), Pt(11))
-    return slide
+    _fill_table(table, header, shown_rows, value_decimals, show_share, Pt(header_font), Pt(body_font))
+
+    legend_top = Emu(int(_MARGIN + table_area_height + _LEGEND_GAP))
+    legend_text = TABLE_LEGEND_WITH_SHARE if show_share else TABLE_LEGEND_NO_SHARE
+    _add_table_legend(slide, _MARGIN, legend_top, width, legend_text)
+    return slide, overflow_rows
 
 
 def build_pptx(
@@ -211,6 +358,7 @@ def build_pptx(
     additive: bool,
     value_decimals: int,
     totals_override: dict[str, float] | None = None,
+    highlight_text: str | None = None,
 ) -> bytes:
     prs = Presentation()
     prs.slide_width = _SLIDE_WIDTH
@@ -253,13 +401,11 @@ def build_pptx(
             for cat in categories
         ]
 
-    first_chunk = rows_data[:_ROWS_PER_SIDE_SLIDE]
-    rest = rows_data[_ROWS_PER_SIDE_SLIDE:]
-    _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, first_chunk, value_decimals, additive)
-
-    for start in range(0, len(rest), _ROWS_PER_FULL_SLIDE):
-        chunk = rest[start : start + _ROWS_PER_FULL_SLIDE]
-        _add_table_slide(prs, header, chunk, value_decimals, additive)
+    _, overflow_rows = _add_combo_slide(
+        prs, img_bytes, img_w_px, img_h_px, header, rows_data, value_decimals, additive, highlight_text,
+    )
+    while overflow_rows:
+        _, overflow_rows = _add_table_slide(prs, header, overflow_rows, value_decimals, additive)
 
     buf = BytesIO()
     prs.save(buf)

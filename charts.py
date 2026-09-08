@@ -233,9 +233,14 @@ def alluvial_stack_chart(
     omite o rotulo do total e sua variacao - usado quando `categories` e
     um recorte tipo "top N" cuja soma nao e o total real).
 
-    `categories` deve estar ordenada do topo para a base da pilha (como
-    aparece visualmente), e todas as categorias devem somar o "total" que
-    se quer mostrar (ex.: as regioes que compoem o T. Brasil).
+    A ordem empilhada (topo -> base) e recalculada ano a ano pelo proprio
+    valor de cada categoria (maior sempre no topo) - NAO segue a ordem de
+    `categories`, que so serve pra desempate (quando duas categorias tem
+    o mesmo valor num ano) e pra ordem de desenho do fluxo entre anos.
+    Isso significa que duas categorias podem trocar de posicao de um ano
+    pro outro, cruzando o fluxo alluvial entre elas - efeito esperado, nao
+    bug. Todas as categorias devem somar o "total" que se quer mostrar
+    (ex.: as regioes que compoem o T. Brasil).
     `filters` fixa as demais colunas categoricas (segmento, fabricante,
     marca, classificacao, cod) para isolar a fatia de dados desejada.
     `values_override` (opcional) substitui a leitura via `compute_values`
@@ -249,13 +254,19 @@ def alluvial_stack_chart(
     values = values_override or compute_values(df, indicator, dimension, categories, years, filters, value_scale)
     totals = {yr: sum(values[cat][yr] for cat in categories) for yr in years}
 
-    # empilha de baixo para cima; `categories` foi informado do topo p/ base
-    stack_order = list(reversed(categories))
+    # empilha de baixo para cima, MAIOR NO TOPO - recalculado ano a ano
+    # (nao uma ordem fixa vinda de `categories`): duas categorias podem
+    # trocar de posicao de um ano pro outro, cruzando o fluxo alluvial
+    # entre elas - efeito pedido pelo usuario em vez de uma pilha com
+    # ordem congelada (que so refletiria o ranking do ultimo ano em
+    # todos os anos). Empate mantem a ordem de `categories` (sort
+    # estavel).
     bottom = {cat: {} for cat in categories}
     top = {cat: {} for cat in categories}
     for yr in years:
+        year_order = sorted(categories, key=lambda c: values[c][yr], reverse=True)
         running = 0.0
-        for cat in stack_order:
+        for cat in reversed(year_order):
             bottom[cat][yr] = running
             running += values[cat][yr]
             top[cat][yr] = running
@@ -351,7 +362,7 @@ def alluvial_stack_chart(
         for i, yr in enumerate(years):
             fig.add_annotation(
                 x=i,
-                y=top[categories[0]][yr] + max_total * 0.04,
+                y=totals[yr] + max_total * 0.04,
                 text=f"<b>{totals[yr]:,.{value_decimals}f}</b>",
                 showarrow=False,
                 xanchor="center",
@@ -381,8 +392,8 @@ def alluvial_stack_chart(
                 x_mid = (i + i + 1) / 2
                 x_start = i + junction_dx
                 x_end = (i + 1) - junction_dx
-                y0 = top[categories[0]][yr0] + riser_gap
-                y1 = top[categories[0]][yr1] + riser_gap
+                y0 = totals[yr0] + riser_gap
+                y1 = totals[yr1] + riser_gap
                 fig.add_trace(
                     go.Scatter(
                         x=[x_start, x_start, x_end, x_end],
