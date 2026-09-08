@@ -22,10 +22,11 @@ from charts import (
     compute_variations,
     line_evolution_chart,
     price_unit_waterfall_chart,
+    unit_additions_bridge_chart,
 )
 from etl import build_dataset
 from export_pptx import TABLE_LEGEND_NO_SHARE, TABLE_LEGEND_WITH_SHARE, build_price_unit_pptx, build_pptx
-from insights import generate_insight, generate_price_unit_insight
+from insights import generate_insight, generate_price_unit_insight, generate_unit_additions_insight
 
 df = build_dataset()
 
@@ -90,7 +91,10 @@ EMBALAGEM_BREAKDOWNS = {
 # "volume" precisa ficar antes de qualquer indicador com `rank_with`
 # nesta lista (ver update_charts: as categorias de "rank_with" so estao
 # disponiveis apos o bloco correspondente ja ter sido processado).
-INDICATOR_BLOCKS = ["volume", "unidades", "valor_com_presentes", "preco_medio_litros"]
+INDICATOR_BLOCKS = [
+    "volume", "unidades", "valor_com_presentes", "compradores",
+    "penetracao", "vol_por_comprador", "frequencia", "preco_medio_litros",
+]
 
 # aba a parte (nao entra em INDICATOR_BLOCKS/update_charts): um waterfall
 # por categoria em vez de um unico grafico com todas juntas - ver
@@ -98,18 +102,36 @@ INDICATOR_BLOCKS = ["volume", "unidades", "valor_com_presentes", "preco_medio_li
 PRICE_UNIT_TAB_KEY = "price_unit"
 PRICE_UNIT_TAB_LABEL = "Price/Unit"
 
-# aba "Adicoes de Unidades": 2021 e usado como ponto zero ARTIFICIAL
-# so pro CALCULO (a planilha nao tem esse ano) - 2022 vira a diferenca
-# de Unidades sobre esse zero, ou seja, o proprio valor cheio de 2022,
-# ja que nao ha um 2021 de verdade pra comparar. O ano "2021" em si NAO
-# aparece no eixo/tabela (so 2022 em diante - ver _build_unit_additions),
-# pra nao parecer que 2021 "vendeu zero" de verdade.
+# aba "Adicoes de Unidades": bridge/waterfall de UMA UNICA transicao
+# (o penultimo -> ultimo ano de YEARS_DEFAULT, hoje 2024->2025 - nao o
+# periodo inteiro, decidido apos o usuario achar a versao com as 4
+# transicoes de 2021 em diante extensa demais) decompondo a diferenca
+# de Unidades entre os dois anos por categoria (Fabricante/Marca/etc)
+# - ver _build_unit_additions_bridge. O rotulo da aba ja reforca o
+# periodo coberto.
 UNIT_ADDITIONS_TAB_KEY = "unit_additions"
-UNIT_ADDITIONS_TAB_LABEL = "Adições de Unidades"
+UNIT_ADDITIONS_YEAR0 = YEARS_DEFAULT[-2]
+UNIT_ADDITIONS_YEAR1 = YEARS_DEFAULT[-1]
+UNIT_ADDITIONS_TAB_LABEL = f"Adições de Unidades {UNIT_ADDITIONS_YEAR0[1:]}→{UNIT_ADDITIONS_YEAR1[1:]}"
 INDICATORS = {
     "volume": dict(label="Volume", value_scale=1e-6, value_decimals=2, unit_label="milhões de litros", is_percent=False, additive=True, chart_type="stack"),
     "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=2, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
     "valor_com_presentes": dict(label="Valor com Presentes", value_scale=1e-6, value_decimals=2, unit_label="R$ milhões", is_percent=False, additive=True, chart_type="stack"),
+    "compradores": dict(label="Compradores (milhões)", value_scale=1e-6, value_decimals=2, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
+    # Penetracao/Vol. por Comprador/Frequencia sao indicadores de
+    # taxa/media (ESCOPO.md secao 3) - nao aditivos entre categorias
+    # (ex.: penetracao de Natura + penetracao de Boticario NAO e a
+    # penetracao do fabricante somado), por isso chart_type="line" (sem
+    # empilhar) e reaproveitam o ranking de Volume (`rank_with`), mesmo
+    # racional do Preco Medio: rankear pelo proprio valor poderia por
+    # uma categoria de volume minusculo no topo so por ter, por
+    # exemplo, frequencia de compra alta numa base pequena de
+    # compradores. Sem `weight_indicator`/`average_mode`: ao contrario
+    # do Preco Medio, nao ha uma media (simples ou ponderada) obvia pra
+    # essas 3 - a linha tracejada fica de fora.
+    "penetracao": dict(label="Penetração", value_scale=1.0, value_decimals=1, unit_label="", is_percent=True, additive=False, chart_type="line", rank_with="volume"),
+    "vol_por_comprador": dict(label="Vol. por Comprador", value_scale=1.0, value_decimals=1, unit_label="litros", is_percent=False, additive=False, chart_type="line", rank_with="volume"),
+    "frequencia": dict(label="Frequência", value_scale=1.0, value_decimals=1, unit_label="", is_percent=False, additive=False, chart_type="line", rank_with="volume"),
     # nao aditivo (preco medio nao se soma entre categorias) - por isso
     # reaproveita o ranking/categorias ja escolhidas no bloco de Volume
     # (`rank_with`) em vez de rankear pelo proprio preco (uma marca de
@@ -756,32 +778,30 @@ def _unit_additions_cell(value, value_decimals):
     return html.Td(text, style={**_TABLE_CELL_STYLE, "color": color, "fontVariantNumeric": "tabular-nums"})
 
 
-def _unit_additions_table(categories, deltas, value_decimals):
+def _unit_additions_table(names, deltas, value_decimals):
     """Tabela simples (sem % de variacao/participacao, ao contrario de
-    `_variation_table`) pra aba "Adicoes de Unidades": uma coluna por
-    ano de YEARS_DEFAULT (2022 a 2025), com cabecalho "AnoAnterior→Ano"
-    (igual as demais tabelas de variacao) deixando explicito que cada
-    numero e uma diferenca - a primeira coluna usa "2021" (o zero
-    artificial, ver _build_unit_additions) so no CABECALHO, nunca como
-    coluna propria (nao ha uma linha "2021" na tabela). Mostra
-    exatamente o numero plotado no grafico naquele ponto - "reflete o
+    `_variation_table`) pra aba "Adicoes de Unidades": UMA coluna so,
+    "AnoAnterior→UltimoAno" (ex.: "2024→2025" - a mesma, unica
+    transicao do grafico, ver UNIT_ADDITIONS_YEAR0/YEAR1), mostrando
+    exatamente o numero plotado no grafico pra cada nome - "reflete o
     que se ve no grafico", nao uma tabela de variacao percentual."""
-    if not categories:
+    if not names:
         return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
 
-    year_pairs = [("2021", YEARS_DEFAULT[0][1:])] + [
-        (YEARS_DEFAULT[i][1:], YEARS_DEFAULT[i + 1][1:]) for i in range(len(YEARS_DEFAULT) - 1)
-    ]
     header = html.Tr(
-        [html.Th("Categoria", style={**_TABLE_CELL_STYLE, "textAlign": "left"})]
-        + [html.Th(f"{y0}→{y1}", style=_TABLE_CELL_STYLE) for y0, y1 in year_pairs]
+        [
+            html.Th("Categoria", style={**_TABLE_CELL_STYLE, "textAlign": "left"}),
+            html.Th(f"{UNIT_ADDITIONS_YEAR0[1:]}→{UNIT_ADDITIONS_YEAR1[1:]}", style=_TABLE_CELL_STYLE),
+        ]
     )
     rows = [
         html.Tr(
-            [html.Td(cat, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"})]
-            + [_unit_additions_cell(deltas[cat][yr], value_decimals) for yr in YEARS_DEFAULT]
+            [
+                html.Td(name, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"}),
+                _unit_additions_cell(deltas[name], value_decimals),
+            ]
         )
-        for cat in categories
+        for name in names
     ]
     return html.Table(
         [html.Thead(header), html.Tbody(rows)],
@@ -938,15 +958,38 @@ app.layout = html.Div(
                         id=f"indicator-panel-{UNIT_ADDITIONS_TAB_KEY}",
                         style={"display": "none"},
                         children=[
+                            # grafico NAO responsivo (largura cresce com o
+                            # numero de blocos - ate 30 categorias x 4
+                            # transicoes, ver charts.unit_additions_bridge_chart)
+                            # - scroll horizontal em vez de espremer tudo
+                            # num container de largura fixa
                             html.Div(
-                                style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "flex-start"},
+                                style={"overflowX": "auto", "marginBottom": "24px"},
                                 children=[
                                     dcc.Graph(
                                         id="graph-unit-additions",
-                                        config={"responsive": True, "displayModeBar": False},
-                                        style={"flex": "5", "minWidth": "420px"},
+                                        config={"responsive": False, "displayModeBar": False},
                                     ),
-                                    html.Div(id="unit-additions-table", style={"flex": "4", "minWidth": "420px", "paddingTop": "60px"}),
+                                ],
+                            ),
+                            # tabela e highlight embaixo do grafico (nao do
+                            # lado, como os outros blocos) - com ate 30+1
+                            # linhas (top N + "Outras"), o grafico ja
+                            # precisa de toda a largura disponivel
+                            html.Div(
+                                style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "flex-start"},
+                                children=[
+                                    html.Div(id="unit-additions-table", style={"flex": "3", "minWidth": "420px"}),
+                                    html.Div(
+                                        [
+                                            html.B("Highlights"),
+                                            html.P(
+                                                id="unit-additions-insight",
+                                                style={"margin": "4px 0 0", "fontSize": "15.5px", "lineHeight": "1.5", "color": "#333"},
+                                            ),
+                                        ],
+                                        style={"flex": "1", "minWidth": "260px", "maxWidth": "360px"},
+                                    ),
                                 ],
                             ),
                         ],
@@ -1394,26 +1437,38 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     return result
 
 
-def _build_unit_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
-    """(categories, deltas, title) pra aba "Adicoes de Unidades":
-    `deltas[cat]` e {ano: diferenca de Unidades sobre o ano anterior},
-    de Y2022 a Y2025 (2021 e so um zero artificial usado pra CALCULAR a
-    diferenca de 2022 - ver comentario acima de UNIT_ADDITIONS_TAB_KEY -
-    mas nao aparece como chave aqui, pra nao sugerir que 2021 e um ano
-    real com venda zero). Usado tanto por `update_unit_additions` (tela)
-    quanto, no futuro, por um botao de exportar - mesmo padrao de
-    `_build_price_unit_rows`/`_build_blocks`."""
+def _build_unit_additions_bridge(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+    """(names, deltas, totals, title) pra aba "Adicoes de Unidades
+    {UNIT_ADDITIONS_YEAR0}->{UNIT_ADDITIONS_YEAR1}": `totals` = {ano:
+    total de Unidades do filtro} pra essa UNICA transicao; `deltas[nome]`
+    = contribuicao daquele nome pra diferenca entre os dois anos (a soma
+    dos deltas de todos os `names` fecha EXATAMENTE com
+    `totals[YEAR1] - totals[YEAR0]`).
+
+    Quando a quebra e so um recorte top N (Marca/Submarca/Variante/Sub
+    Variante - `true_totals` vem preenchido de `build_selection`),
+    `names` inclui uma categoria residual "Outras"/"Demais outras" com
+    o que nao esta no top N, garantindo essa soma exata; pra Segmento/
+    Fabricante/Embalagem (todas as categorias exibidas ja fecham o
+    total de verdade) nao ha residuo.
+
+    Usado tanto pela tabela (`_unit_additions_table`) quanto, apos
+    reordenar por transicao (ver `_bridge_transition_order`), pelo
+    grafico (`charts.unit_additions_bridge_chart`) - mesma fonte de
+    dados pros dois, entao sempre batem."""
     if not breakdown:
         breakdown = "segmento"
     if breakdown not in TOP_N_BREAKDOWNS:
         top_n = _TOP_N
 
-    categories, dim_col, filters, values_override, title, _ = build_selection(
+    yr0, yr1 = UNIT_ADDITIONS_YEAR0, UNIT_ADDITIONS_YEAR1
+
+    categories, dim_col, filters, values_override, title, true_totals = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
         "unidades", top_n,
     )
     if not categories:
-        return [], {}, title
+        return [], {}, {}, title
 
     if values_override is not None:
         unidades_values = values_override
@@ -1422,23 +1477,35 @@ def _build_unit_additions(breakdown, regiao_view, segmento_f, fabricante_f, marc
             df, "unidades", dim_col, categories, YEARS_DEFAULT, filters, INDICATORS["unidades"]["value_scale"],
         )
 
-    deltas: dict[str, dict[str, float]] = {}
-    for cat in categories:
-        prev = 0.0  # "2021" artificial - so pra 2022 virar diferenca sobre zero
-        yearly = {}
-        for yr in YEARS_DEFAULT:
-            curr = unidades_values[cat][yr]
-            yearly[yr] = curr - prev
-            prev = curr
-        deltas[cat] = yearly
+    totals = {}
+    for yr in (yr0, yr1):
+        totals[yr] = true_totals[yr] if true_totals is not None else sum(unidades_values[cat][yr] for cat in categories)
 
-    # ordenado pela maior adicao no ultimo ano (2025), nao pela ordem de
-    # `categories` (que vem rankeada pelo VALOR de Unidades, nao pela
-    # diferenca) - afeta tanto a tabela quanto a ordem dos nomes ao
-    # final de cada linha no grafico
-    categories = sorted(categories, key=lambda cat: deltas[cat][YEARS_DEFAULT[-1]], reverse=True)
+    names = list(categories)
+    deltas = {cat: unidades_values[cat][yr1] - unidades_values[cat][yr0] for cat in categories}
 
-    return categories, deltas, title
+    if true_totals is not None:
+        residual_label = "Demais outras" if "Outras" in categories else "Outras"
+        residual0 = totals[yr0] - sum(unidades_values[cat][yr0] for cat in categories)
+        residual1 = totals[yr1] - sum(unidades_values[cat][yr1] for cat in categories)
+        names.append(residual_label)
+        deltas[residual_label] = residual1 - residual0
+
+    # ordem da TABELA: maior adicao primeiro - a ordem VISUAL do grafico
+    # e recalculada a parte (ver _bridge_transition_order), nao usa esta
+    names = sorted(names, key=lambda n: deltas[n], reverse=True)
+
+    return names, deltas, totals, title
+
+
+def _bridge_transition_order(names, deltas):
+    """Ordem visual dos blocos de `charts.unit_additions_bridge_chart`:
+    negativos em ordem DECRESCENTE (maior queda primeiro) seguidos dos
+    positivos em ordem CRESCENTE (maior alta por ultimo, colado no
+    pilar seguinte) - efeito "vale" entre os dois pilares cinzas."""
+    negatives = sorted((n for n in names if deltas[n] < 0), key=lambda n: deltas[n])
+    positives = sorted((n for n in names if deltas[n] >= 0), key=lambda n: deltas[n])
+    return negatives + positives
 
 
 @app.callback(
@@ -1500,6 +1567,7 @@ def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f
 @app.callback(
     Output("graph-unit-additions", "figure"),
     Output("unit-additions-table", "children"),
+    Output("unit-additions-insight", "children"),
     Input("dimension-dropdown", "value"),
     Input("regiao-tabs", "value"),
     Input("segmento-filter", "value"),
@@ -1511,18 +1579,25 @@ def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f
     Input("top-n-selector", "value"),
 )
 def update_unit_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
-    categories, deltas, title = _build_unit_additions(
+    names, deltas, totals, title = _build_unit_additions_bridge(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
     )
     cfg = INDICATORS["unidades"]
-    fig = line_evolution_chart(
-        df=df, indicator="unidades", dimension="rotulo", categories=categories, years=YEARS_DEFAULT,
-        title=title, subtitle=f"Adições de Unidades ({cfg['unit_label']})",
-        value_decimals=cfg["value_decimals"], is_percent=False, values_override=deltas,
+    order = _bridge_transition_order(names, deltas) if names else []
+    fig = unit_additions_bridge_chart(
+        title, UNIT_ADDITIONS_YEAR0, UNIT_ADDITIONS_YEAR1, totals, order, deltas,
+        value_decimals=cfg["value_decimals"], unit_label="milhões de unidades",
     )
-    fig.update_layout(autosize=True, width=None)
-    table = _unit_additions_table(categories, deltas, cfg["value_decimals"])
-    return fig, table
+    # SEM fig.update_layout(autosize=True, width=None) - ao contrario dos
+    # outros graficos, este NAO e responsivo: a largura cresce com o
+    # numero de blocos (ate 30 categorias), ver
+    # charts.unit_additions_bridge_chart e o container com scroll
+    # horizontal em app.layout
+    table = _unit_additions_table(names, deltas, cfg["value_decimals"])
+    insight = generate_unit_additions_insight(
+        names, deltas, totals, UNIT_ADDITIONS_YEAR0, UNIT_ADDITIONS_YEAR1, unit_label=cfg["unit_label"],
+    )
+    return fig, table, insight
 
 
 if __name__ == "__main__":

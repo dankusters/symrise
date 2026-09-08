@@ -35,6 +35,8 @@ Uso tipico:
 
 from __future__ import annotations
 
+import math
+
 import plotly.graph_objects as go
 
 from colors import get_color
@@ -50,6 +52,10 @@ _BAR_OPACITY = 0.96
 # blocos de cor parecida
 _BAR_BORDER_COLOR = "rgba(0,0,0,0.6)"
 _BAR_BORDER_WIDTH = 1.25
+
+# cor das barras "total"/"absolute" (pilares) nos waterfalls - cinza,
+# nao a cor de nenhuma categoria especifica
+_TOTAL_BAR_COLOR = "#AFAFAF"
 _FLOW_OPACITY = 0.6
 _FLOW_WHITEN = 0.22  # 0-1: quanto a cor do fluxo e clareada em direcao ao branco
 _BAR_HALF_WIDTH = 0.3
@@ -58,6 +64,10 @@ _CURVE_POINTS = 40
 # variacao ano-a-ano: verde se positiva, vermelho se negativa
 _POSITIVE = {"line": "#1E8E5A", "text": "#166B45", "bg": "rgba(210,245,227,0.95)"}
 _NEGATIVE = {"line": "#C23B3B", "text": "#992E2E", "bg": "rgba(252,222,222,0.95)"}
+
+# margem do eixo Y dinamico de unit_additions_bridge_chart: % do
+# (max-min) do conteudo plotado, adicionada acima/abaixo - ver ali
+Y_AXIS_PAD_FRACTION = 0.2
 
 
 def _change_style(pct: float) -> dict:
@@ -769,7 +779,7 @@ def price_unit_waterfall_chart(
             textfont=dict(size=13, family=FONT_FAMILY),
             increasing=dict(marker=dict(color=_POSITIVE["line"], line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
             decreasing=dict(marker=dict(color=_NEGATIVE["line"], line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
-            totals=dict(marker=dict(color="#AFAFAF", line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
+            totals=dict(marker=dict(color=_TOTAL_BAR_COLOR, line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
             connector=dict(line=dict(color="rgba(150,150,150,0.5)", width=1)),
             width=0.62,
             showlegend=False,
@@ -858,4 +868,242 @@ def price_unit_waterfall_chart(
         yaxis=dict(visible=False, range=[0, pill_y * 1.15]),
         showlegend=False,
     )
+    return fig
+
+
+def unit_additions_bridge_chart(
+    title: str,
+    yr0: str,
+    yr1: str,
+    totals: dict[str, float],
+    order: list[str],
+    deltas: dict[str, float],
+    value_decimals: int = 2,
+    unit_label: str = "milhões",
+    height: int = 520,
+) -> go.Figure:
+    """Waterfall/"bridge" da aba "Adicoes de Unidades": dois pilares
+    cinzas (medida "absolute"/"total") com o total de Unidades do
+    filtro em `yr0` e `yr1` (ex.: Y2024 -> Y2025 - so essa UMA
+    transicao, nao o periodo inteiro), e ENTRE eles um bloco por
+    categoria (medida "relative", verde se contribuiu positivamente
+    pra diferenca/vermelho se negativamente - mesmo esquema de
+    `price_unit_waterfall_chart`; go.Waterfall NAO aceita cor
+    customizada por ponto individual, so por grupo increasing/
+    decreasing/totals).
+
+    `order` (lista de nomes, MESMA ordem em que os blocos aparecem no
+    grafico) e calculada pelo chamador (nao aqui, ver
+    `app._bridge_transition_order`): negativos em ordem decrescente
+    (maior queda primeiro) seguidos dos positivos em ordem crescente
+    (maior alta por ultimo, colado no pilar `yr1`) - efeito "vale"
+    entre os dois pilares. `deltas`/soma de todos os `order` fecha
+    EXATAMENTE com `totals[yr1] - totals[yr0]` (ver
+    `app._build_unit_additions_bridge`, que cuida da categoria residual
+    "Outras"/"Demais outras" quando `categories` e so um recorte top N,
+    garantindo essa soma). Como pode ter dezenas de categorias (top N
+    ate 30), o grafico NAO e responsivo/auto-fit como os outros - a
+    largura cresce com o numero de blocos (o chamador deve envolver o
+    `dcc.Graph` num container com `overflow-x: auto`, ver `app.py`)."""
+    x_ticktext = [yr0[1:]]
+    measures = ["absolute"]
+    y_values = [totals[yr0]]
+    bar_text = [f"<b>{totals[yr0]:,.{value_decimals}f}</b>"]
+
+    for name in order:
+        x_ticktext.append(name)
+        measures.append("relative")
+        delta = deltas[name]
+        y_values.append(delta)
+        # mesmo formato de rotulo dos blocos de `price_unit_waterfall_chart`:
+        # % pequeno colorido (delta sobre o pilar `yr0`, igual ao "unit_pct"/
+        # "price_pct" de `price_unit_effects`) em cima do valor em negrito
+        pct = (delta / totals[yr0] * 100) if totals.get(yr0) else None
+        pct_text = f"{pct:+.1f}%" if pct is not None else ""
+        effect_color = _POSITIVE["text"] if delta >= 0 else _NEGATIVE["text"]
+        bar_text.append(
+            f"<span style='font-size:10px;color:{effect_color}'>{pct_text}</span>"
+            f"<br><b>{delta:+,.{value_decimals}f}</b>"
+        )
+
+    x_ticktext.append(yr1[1:])
+    measures.append("total")
+    y_values.append(totals[yr1])
+    bar_text.append(f"<b>{totals[yr1]:,.{value_decimals}f}</b>")
+
+    # eixo x numerico (0..N) - mesmo racional de price_unit_waterfall_chart
+    x_positions = list(range(len(x_ticktext)))
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Waterfall(
+            x=x_positions,
+            y=y_values,
+            measure=measures,
+            text=bar_text,
+            textposition="outside",
+            textfont=dict(size=13, family=FONT_FAMILY),
+            increasing=dict(marker=dict(color=_POSITIVE["line"], line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
+            decreasing=dict(marker=dict(color=_NEGATIVE["line"], line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
+            totals=dict(marker=dict(color=_TOTAL_BAR_COLOR, line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
+            connector=dict(line=dict(color="rgba(150,150,150,0.5)", width=1)),
+            width=0.7,
+            showlegend=False,
+        )
+    )
+
+    # eixo Y dinamico: os pilares (total real) sao ordens de grandeza
+    # maiores que os blocos de delta entre eles - comecar do zero
+    # deixaria os blocos praticamente invisiveis. Em vez disso, o range
+    # e calculado a partir do menor/maior valor REALMENTE plotado (os 2
+    # pilares + o caminho acumulado dos blocos - `path_values`), com uma
+    # margem percentual pra baixo (Y_AXIS_PAD_FRACTION, % do max-min) e
+    # espaco suficiente em cima pro rotulo "outside" dos pilares + a
+    # chave de variacao (ver bracket abaixo). Quando isso deixa o minimo
+    # do eixo acima de zero, os pilares ficam visualmente "cortados" na
+    # base - pra deixar isso explicito (em vez de parecer um erro de
+    # leitura), desenha uma marca de corte em zigue-zague na base de
+    # cada pilar.
+    running = totals[yr0]
+    path_values = [totals[yr0], totals[yr1]]
+    for name in order:
+        running += deltas[name]
+        path_values.append(running)
+    content_min, content_max = min(path_values), max(path_values)
+    spread = content_max - content_min
+    if spread <= 0:
+        spread = max(abs(content_max), 1.0) * 0.1
+    # os blocos agora tem rotulo de 2 linhas (% + valor, ver bar_text
+    # acima) - pra um bloco decrescente esse rotulo cai ABAIXO da barra
+    # (textposition="outside"), entao o espaco embaixo precisa de mais
+    # margem que so o corte do eixo (Y_AXIS_PAD_FRACTION sozinho nao e
+    # suficiente e o texto fica cortado)
+    pad = spread * max(Y_AXIS_PAD_FRACTION, 0.4)
+
+    # chave de variacao entre os dois pilares (bracket + "pill" com a
+    # variacao %), MESMO estilo de `price_unit_waterfall_chart`: hastes
+    # cinzas subindo de cada pilar ate uma barra horizontal, com o
+    # rotulo colorido (verde/vermelho, `_change_style`) centralizado
+    # nela. A geometria vertical la e proporcional ao valor bruto
+    # (`max_total*1.24`) porque o eixo daquele grafico comeca em zero -
+    # aqui e proporcional ao `spread` plotado, ja que o eixo e recortado
+    # (ver acima) e uma fracao do valor bruto explodiria o range.
+    pct = (totals[yr1] / totals[yr0] - 1) * 100 if totals.get(yr0) else None
+    label_gap = spread * 0.22  # espaco pro rotulo em negrito acima do pilar
+    riser_gap = spread * 0.12
+    bracket_h = spread * 0.5
+    pill_y = content_max + label_gap + riser_gap + bracket_h
+
+    y_range_min = content_min - pad
+    y_range_max = pill_y + spread * 0.18 if pct is not None else content_max + pad * 1.4
+    has_axis_break = y_range_min > 0
+    if not has_axis_break:
+        y_range_min = min(0.0, y_range_min)
+
+    if pct is not None:
+        style = _change_style(pct)
+        i0, i1 = x_positions[0], x_positions[-1]
+        x_mid = (i0 + i1) / 2
+        junction_dx = 0.18
+        x_start, x_end = i0 + junction_dx, i1 - junction_dx
+        y0 = totals[yr0] + riser_gap
+        y1 = totals[yr1] + riser_gap
+        connector_gray = "rgba(128,128,128,0.7)"
+        fig.add_trace(
+            go.Scatter(
+                x=[x_start, x_start, x_end, x_end],
+                y=[y0, pill_y, pill_y, y1],
+                mode="lines",
+                line=dict(color=connector_gray, width=0.9),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[x_end],
+                y=[y1],
+                mode="markers",
+                marker=dict(symbol="triangle-down", size=6, color=connector_gray),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+        fig.add_annotation(
+            x=x_mid, y=pill_y,
+            text=f"<b>{pct:+.1f}%</b>",
+            showarrow=False,
+            bordercolor=style["line"], borderwidth=1, borderpad=7,
+            bgcolor=style["bg"],
+            font=dict(color=style["text"], size=11),
+        )
+
+    n_positions = len(x_positions)
+    # piso alto o bastante pra preencher o container disponivel (o painel
+    # nao tem largura maxima propria - herda o maxWidth:1400px do app,
+    # ver app.py) mesmo com poucos blocos (ex.: Segmento, so 4); so
+    # cresce alem disso - com scroll horizontal no container, ver
+    # app.py - pra quebras com MUITAS categorias (ex.: Submarca/Marca
+    # top 30)
+    width_px = max(1300, 90 + n_positions * 32)
+    margin = dict(l=60, r=30, t=90, b=150)
+
+    header = title if not unit_label else f"{title}<br><span style='font-size:13px;color:#666'>{unit_label}</span>"
+    fig.update_layout(
+        title=dict(text=header, x=0.01, xanchor="left"),
+        height=height,
+        width=width_px,
+        font=dict(family=FONT_FAMILY),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=margin,
+        xaxis=dict(
+            tickmode="array",
+            tickvals=x_positions,
+            ticktext=x_ticktext,
+            tickangle=-90,
+            showgrid=False,
+            zeroline=False,
+            range=[-0.6, x_positions[-1] + 0.6],
+        ),
+        # sem valores/grade no eixo Y - mesmo estilo de
+        # `price_unit_waterfall_chart` (o rotulo de unidade ja vai no
+        # subtitulo, ver `header` acima)
+        yaxis=dict(visible=False, range=[y_range_min, y_range_max]),
+        showlegend=False,
+    )
+
+    if has_axis_break:
+        full_range = y_range_max - y_range_min
+        gap_y = y_range_min + full_range * 0.035
+        # marca de corte = um unico traco branco GROSSO (sem contorno
+        # preto - so o "rasgo" branco) inclinado ~20 graus, mais largo
+        # que a propria barra (metade = 0.35, ver width=0.7 do
+        # go.Waterfall acima) pra "vazar" pros dois lados do pilar. Como
+        # a shape e um "line" com stroke largo, o angulo VISUAL (em
+        # pixel, nao em unidade de dado) depende da escala px/unidade de
+        # cada eixo - convertida abaixo a partir de width_px/height/
+        # margens/ranges (o grafico e de tamanho fixo, nao responsivo)
+        plot_width_px = width_px - margin["l"] - margin["r"]
+        plot_height_px = height - margin["t"] - margin["b"]
+        x_span = (x_positions[-1] + 0.6) - (-0.6)
+        px_per_xunit = plot_width_px / x_span
+        px_per_yunit = plot_height_px / full_range
+
+        cut_span_xdata = 1.0  # x_center +-0.5, um pouco alem da barra (largura 0.7)
+        dx_px = cut_span_xdata * px_per_xunit
+        theta = math.radians(20)
+        dy_px = dx_px * math.tan(theta)
+        dy_data = dy_px / px_per_yunit
+
+        shapes = []
+        for x_center in (x_positions[0], x_positions[-1]):
+            shapes.append(dict(
+                type="line", xref="x", yref="y", layer="above",
+                x0=x_center - cut_span_xdata / 2, y0=gap_y - dy_data / 2,
+                x1=x_center + cut_span_xdata / 2, y1=gap_y + dy_data / 2,
+                line=dict(color="white", width=15),
+            ))
+        fig.update_layout(shapes=shapes)
+
     return fig

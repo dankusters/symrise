@@ -270,3 +270,40 @@ def generate_price_unit_insight(
             f"Presentes, que pode ser derivado de {causal}."
         )
     return text
+
+
+def generate_unit_additions_insight(
+    names: list[str],
+    deltas: dict[str, float],
+    totals: dict[str, float],
+    yr0: str,
+    yr1: str,
+    unit_label: str = "milhões",
+) -> str:
+    """Comentario pro bridge chart de `charts.unit_additions_bridge_chart`
+    (transicao UNICA yr0->yr1, ex.: 2024->2025): quem mais empurrou o
+    total de Unidades pra cima e pra baixo, junto com a variacao do
+    total nesse periodo. `names`/`deltas`/`totals`: mesma estrutura
+    devolvida por `app._build_unit_additions_bridge` (inclui a
+    categoria residual "Outras"/"Demais outras" quando aplicavel)."""
+    if not names:
+        return ""
+    total_delta = totals[yr1] - totals[yr0]
+
+    yr_label = yr1.replace("Y", "")
+    prev_label = yr0.replace("Y", "")
+    total_verb = "cresceu" if total_delta >= 0 else "caiu"
+
+    ranked = sorted(names, key=lambda n: deltas[n], reverse=True)
+    top_gain, top_loss = ranked[0], ranked[-1]
+    gain_delta, loss_delta = deltas[top_gain], deltas[top_loss]
+
+    parts = [
+        f"O total de Unidades {total_verb} {abs(total_delta):,.2f} {unit_label} em {yr_label} "
+        f"(ante {prev_label})."
+    ]
+    if gain_delta > 0:
+        parts.append(f"{top_gain} liderou o crescimento, contribuindo com +{gain_delta:,.2f} {unit_label}.")
+    if loss_delta < 0 and top_loss != top_gain:
+        parts.append(f"{top_loss} puxou a queda, com {loss_delta:,.2f} {unit_label}.")
+    return " ".join(parts)
