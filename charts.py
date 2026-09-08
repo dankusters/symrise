@@ -226,12 +226,36 @@ def alluvial_stack_chart(
     width: int = 760,
     values_override: dict[str, dict[str, float]] | None = None,
     show_total: bool = True,
+    coverage_pct: dict[str, float] | None = None,
+    true_totals: dict[str, float] | None = None,
 ) -> go.Figure:
     """Monta um grafico de barras empilhadas com fluxo curvo entre anos
     (estilo alluvial), com rotulos de valor/participacao e variacao %
     ano a ano, tanto por categoria quanto no total (`show_total=False`
-    omite o rotulo do total e sua variacao - usado quando `categories` e
-    um recorte tipo "top N" cuja soma nao e o total real).
+    omite o rotulo do total e sua variacao - usado quando nao ha nada
+    coerente pra mostrar ali).
+
+    `coverage_pct` (opcional, {ano: percentual}): quando `categories` e
+    so um recorte top N (Marca/Submarca/Variante) cuja soma NAO e o
+    total real, substitui o valor nominal mostrado no topo de cada
+    coluna pela soma da participacao (share) das categorias exibidas
+    naquele ano (ex.: Fabricante A 30% + Fabricante B 15% = "45%" no
+    topo) - a "chave"/bracket entre colunas passa a mostrar a variacao
+    em pontos percentuais dessa cobertura, nao mais uma variacao %.
+    Mostrar o valor NOMINAL ali seria enganoso (pareceria o total do
+    mercado/marca, quando e so a soma do que foi exibido).
+
+    `true_totals` (opcional, {ano: valor}): denominador do % de
+    participacao mostrado DENTRO de cada segmento da barra (2a linha do
+    rotulo, ex.: "3.46<br>33.5%"). Sem isso, usa `totals` (a soma das
+    proprias `categories` exibidas) - correto quando elas fecham o
+    total de verdade (Fabricante/Segmento), mas ERRADO num recorte top
+    N (Marca/Submarca/Variante): inflaria o % de cada categoria (ex.:
+    33.5% do que foi exibido, nao os ~20% reais do mercado/marca) e
+    destoaria da tabela de variacao ao lado, que ja usa o total real
+    (ver `compute_variations`/`totals_override`) - por isso o chamador
+    deve passar o MESMO `true_totals` aqui pra manter os dois
+    consistentes.
 
     A ordem empilhada (topo -> base) e recalculada ano a ano pelo proprio
     valor de cada categoria (maior sempre no topo) - NAO segue a ordem de
@@ -330,6 +354,7 @@ def alluvial_stack_chart(
     # (faixas muito finas ganham fonte menor e perdem o sub-rotulo de
     # participacao, para nao virar sopa de letrinhas)
     max_total_for_labels = max(totals.values()) if totals else 0
+    share_totals = true_totals if true_totals is not None else totals
     for cat in categories:
         for i, yr in enumerate(years):
             band_height = top[cat][yr] - bottom[cat][yr]
@@ -338,8 +363,8 @@ def alluvial_stack_chart(
                 continue  # faixa residual: sem espaco para rotulo legivel
             mid = (bottom[cat][yr] + top[cat][yr]) / 2
             value_text = _format_value(values[cat][yr], value_decimals, is_percent)
-            show_share = not is_percent and totals[yr] != 0 and ratio >= 0.08
-            share_text = f"{values[cat][yr] / totals[yr] * 100:.1f}%" if show_share else ""
+            show_share = not is_percent and share_totals.get(yr) and ratio >= 0.08
+            share_text = f"{values[cat][yr] / share_totals[yr] * 100:.1f}%" if show_share else ""
             label = value_text if not share_text else f"{value_text}<br>{share_text}"
             fig.add_annotation(
                 x=i,
@@ -360,10 +385,11 @@ def alluvial_stack_chart(
     max_total = max(totals.values()) if totals else 0
     if show_total:
         for i, yr in enumerate(years):
+            top_text = f"<b>{coverage_pct[yr]:.1f}%</b>" if coverage_pct else f"<b>{totals[yr]:,.{value_decimals}f}</b>"
             fig.add_annotation(
                 x=i,
                 y=totals[yr] + max_total * 0.04,
-                text=f"<b>{totals[yr]:,.{value_decimals}f}</b>",
+                text=top_text,
                 showarrow=False,
                 xanchor="center",
                 font=dict(color="#222222", size=17),
@@ -387,8 +413,13 @@ def alluvial_stack_chart(
         for i in range(len(years) - 1):
             yr0, yr1 = years[i], years[i + 1]
             if totals[yr0]:
-                pct = (totals[yr1] - totals[yr0]) / totals[yr0] * 100
-                style = _change_style(pct)
+                if coverage_pct:
+                    change = coverage_pct[yr1] - coverage_pct[yr0]
+                    change_text = f"<b>{change:+.1f}pp</b>"
+                else:
+                    change = (totals[yr1] - totals[yr0]) / totals[yr0] * 100
+                    change_text = f"<b>{change:+.1f}%</b>"
+                style = _change_style(change)
                 x_mid = (i + i + 1) / 2
                 x_start = i + junction_dx
                 x_end = (i + 1) - junction_dx
@@ -417,7 +448,7 @@ def alluvial_stack_chart(
                 fig.add_annotation(
                     x=x_mid,
                     y=pill_y,
-                    text=f"<b>{pct:+.1f}%</b>",
+                    text=change_text,
                     showarrow=False,
                     bordercolor=style["line"],
                     borderwidth=1,

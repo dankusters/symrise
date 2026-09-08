@@ -14,20 +14,86 @@ nominal em cinza entre parenteses, categoria em negrito.
 
 from __future__ import annotations
 
+import os
 from io import BytesIO
 
 import plotly.graph_objects as go
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.text import MSO_ANCHOR
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
 from charts import YEARS_DEFAULT, compute_variations
+from etl import SOURCE_PATH
 
 _SLIDE_WIDTH = Inches(13.333)
 _SLIDE_HEIGHT = Inches(7.5)
 _MARGIN = Inches(0.35)
 _GAP = Inches(0.3)
+
+# fonte de todo texto exportado (tabela, legenda, Highlights) - mesma
+# familia usada na tela (assets/fonts.css), so a variante condensada
+# (mais estreita, cabe melhor nas celulas apertadas da tabela)
+_FONT_NAME = "Roboto Condensed"
+
+# logo Symrise + titulo, canto superior esquerdo de todo slide - mesmo
+# arquivo (recortado, sem a folga em branco a direita do SVG original
+# em assets/SY1.DE_BIG.svg) e mesmo texto ao lado usados no cabecalho
+# da tela (ver app.py)
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "symrise_logo.png")
+_LOGO_HEIGHT = Inches(0.28)
+_LOGO_ASPECT = 1567 / 371  # dimensoes reais (px) de symrise_logo.png
+_LOGO_WIDTH = Emu(int(_LOGO_HEIGHT * _LOGO_ASPECT))
+_LOGO_GAP = Inches(0.1)
+_TITLE_TEXT = "Worldpanel Dashboard"
+_TITLE_GAP = Inches(0.12)  # espaco entre o logo e o titulo, na horizontal
+# topo do conteudo (grafico/tabela) de todo slide - desce um pouco pra
+# abrir espaco pro logo, sem sobrepor
+_CONTENT_TOP = Emu(int(_MARGIN + _LOGO_HEIGHT + _LOGO_GAP))
+
+# rodape com a fonte dos dados, canto inferior direito de todo slide -
+# base do conteudo sobe um pouco pra abrir espaco, sem sobrepor (mesma
+# logica do logo, no topo)
+_FOOTER_TEXT = f"Fonte: {os.path.basename(SOURCE_PATH)}"
+_FOOTER_HEIGHT = Inches(0.2)
+_FOOTER_GAP = Inches(0.05)
+_FOOTER_WIDTH = Inches(4.5)
+_CONTENT_BOTTOM = Emu(int(_SLIDE_HEIGHT - _MARGIN - _FOOTER_HEIGHT - _FOOTER_GAP))
+
+
+def _add_logo(slide):
+    slide.shapes.add_picture(_LOGO_PATH, _MARGIN, _MARGIN, height=_LOGO_HEIGHT)
+
+    title_left = Emu(int(_MARGIN + _LOGO_WIDTH + _TITLE_GAP))
+    title_width = Inches(4.0)
+    txbox = slide.shapes.add_textbox(title_left, _MARGIN, title_width, _LOGO_HEIGHT)
+    tf = txbox.text_frame
+    tf.word_wrap = False
+    tf.margin_top = 0
+    tf.margin_bottom = 0
+    tf.margin_left = 0
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    run = tf.paragraphs[0].add_run()
+    run.text = _TITLE_TEXT
+    run.font.name = _FONT_NAME
+    run.font.bold = True
+    run.font.size = Pt(14)
+    run.font.color.rgb = RGBColor(0x22, 0x22, 0x22)
+
+
+def _add_footer(slide):
+    left = Emu(int(_SLIDE_WIDTH - _MARGIN - _FOOTER_WIDTH))
+    top = Emu(int(_SLIDE_HEIGHT - _MARGIN - _FOOTER_HEIGHT))
+    txbox = slide.shapes.add_textbox(left, top, _FOOTER_WIDTH, _FOOTER_HEIGHT)
+    tf = txbox.text_frame
+    tf.word_wrap = False
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.RIGHT
+    run = p.add_run()
+    run.text = _FOOTER_TEXT
+    run.font.name = _FONT_NAME
+    run.font.size = Pt(7)
+    run.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
 
 # fracao da largura util (descontada a margem) reservada pro grafico -
 # espelha a proporcao "flex: 5" grafico / "flex: 4" tabela do layout na
@@ -113,6 +179,7 @@ def _add_variation_paragraph(paragraph, value, suffix, nominal_text, font_size):
     if value is None:
         run = paragraph.add_run()
         run.text = "–"
+        run.font.name = _FONT_NAME
         run.font.color.rgb = _MUTED_RGB
         run.font.size = font_size
         return
@@ -120,11 +187,13 @@ def _add_variation_paragraph(paragraph, value, suffix, nominal_text, font_size):
     icon = "▲" if value >= 0 else "▼"
     run = paragraph.add_run()
     run.text = f"{icon} {value:+.1f}{suffix}"
+    run.font.name = _FONT_NAME
     run.font.color.rgb = color
     run.font.size = font_size
     if nominal_text is not None:
         run2 = paragraph.add_run()
         run2.text = f" ({nominal_text})"
+        run2.font.name = _FONT_NAME
         run2.font.color.rgb = _NOMINAL_RGB
         run2.font.size = font_size
 
@@ -140,24 +209,25 @@ def _fill_variation_cell(cell, pct, share_pp, nominal, share_value, value_decima
         _add_variation_paragraph(p, share_pp, "pp", share_text, font_size)
 
 
-_HEADER_FILL_RGB = RGBColor(0xF5, 0xF5, 0xF5)
 _BODY_FILL_RGB = RGBColor(0xFF, 0xFF, 0xFF)
 
 
 def _style_table_plain(table, n_rows, n_cols, margin_pt=2.0):
     """Remove o banding/tema colorido padrao do PowerPoint pra tabela (fundo
-    branco, cabecalho cinza bem claro) - o estilo padrao (faixas azuis
-    alternadas) nao existe na tabela HTML da tela. `margin_pt` (topo/base
-    de cada celula) encolhe junto com a fonte no scale-to-fit (ver
-    `_fit_table`) - a margem esquerda/direita fica fixa, so a vertical
-    conta pra altura da linha."""
+    branco solido, cabecalho incluso) - o estilo padrao (faixas azuis
+    alternadas, cabecalho colorido) nao existe na tabela HTML da tela,
+    onde o cabecalho tambem e branco (so uma borda embaixo, sem fundo -
+    ver `app._TABLE_CELL_STYLE`). `margin_pt` (topo/base de cada
+    celula) encolhe junto com a fonte no scale-to-fit (ver `_fit_table`)
+    - a margem esquerda/direita fica fixa, so a vertical conta pra
+    altura da linha."""
     table.first_row = False
     table.horz_banding = False
     for i in range(n_rows):
         for j in range(n_cols):
             cell = table.cell(i, j)
             cell.fill.solid()
-            cell.fill.fore_color.rgb = _HEADER_FILL_RGB if i == 0 else _BODY_FILL_RGB
+            cell.fill.fore_color.rgb = _BODY_FILL_RGB
             cell.margin_left = Pt(4)
             cell.margin_right = Pt(4)
             cell.margin_top = Pt(margin_pt)
@@ -170,6 +240,7 @@ def _fill_table(table, header, rows_data, value_decimals, show_share, header_siz
         cell = table.cell(0, j)
         cell.text = text
         run = cell.text_frame.paragraphs[0].runs[0]
+        run.font.name = _FONT_NAME
         run.font.bold = True
         run.font.size = header_size
         run.font.color.rgb = _HEADER_RGB
@@ -179,6 +250,7 @@ def _fill_table(table, header, rows_data, value_decimals, show_share, header_siz
         cat_cell.text = cat
         cat_cell.text_frame.word_wrap = True
         cat_run = cat_cell.text_frame.paragraphs[0].runs[0]
+        cat_run.font.name = _FONT_NAME
         cat_run.font.bold = True
         cat_run.font.size = body_size
         for j, (pct, share_pp, nominal, share_value) in enumerate(cells, start=1):
@@ -199,7 +271,7 @@ def _chart_area_size():
     letterboxing nem distorcao)."""
     usable_width = _SLIDE_WIDTH - 2 * _MARGIN
     chart_area_width = Emu(int(usable_width * _CHART_WIDTH_FRACTION))
-    area_height = _SLIDE_HEIGHT - 2 * _MARGIN
+    area_height = Emu(int(_CONTENT_BOTTOM - _CONTENT_TOP))
     return chart_area_width, area_height
 
 
@@ -243,6 +315,7 @@ def _add_table_legend(slide, left, top, width, legend_text):
     tf.word_wrap = True
     run = tf.paragraphs[0].add_run()
     run.text = legend_text
+    run.font.name = _FONT_NAME
     run.font.size = Pt(8)
     run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
@@ -258,6 +331,7 @@ def _add_highlight_textbox(slide, top, height, highlight_text):
 
     heading_run = tf.paragraphs[0].add_run()
     heading_run.text = "Highlights"
+    heading_run.font.name = _FONT_NAME
     heading_run.font.bold = True
     heading_run.font.size = Pt(14)
     heading_run.font.color.rgb = _HEADER_RGB
@@ -266,6 +340,7 @@ def _add_highlight_textbox(slide, top, height, highlight_text):
     body_p.space_before = Pt(4)
     body_run = body_p.add_run()
     body_run.text = highlight_text
+    body_run.font.name = _FONT_NAME
     body_run.font.size = Pt(12)
     body_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
@@ -278,6 +353,8 @@ def _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, rows_data, valu
     inteira (scale-to-fit, ver `_fit_table`); o que nem assim couber e
     devolvido pro chamador colocar num slide de continuacao."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_logo(slide)
+    _add_footer(slide)
 
     chart_area_width, full_area_height = _chart_area_size()
     if highlight_text:
@@ -285,7 +362,7 @@ def _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, rows_data, valu
     else:
         area_height = full_area_height
 
-    left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _MARGIN, chart_area_width, area_height)
+    left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _CONTENT_TOP, chart_area_width, area_height)
     slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
 
     table_left = _MARGIN + chart_area_width + _GAP
@@ -301,19 +378,19 @@ def _add_combo_slide(prs, img_bytes, img_w_px, img_h_px, header, rows_data, valu
 
     n_rows = len(shown_rows) + 1
     n_cols = len(header)
-    graphic_frame = slide.shapes.add_table(n_rows, n_cols, table_left, _MARGIN, table_width, table_area_height)
+    graphic_frame = slide.shapes.add_table(n_rows, n_cols, table_left, _CONTENT_TOP, table_width, table_area_height)
     table = graphic_frame.table
     _style_table_plain(table, n_rows, n_cols, margin_pt)
     for i, col_width in enumerate(_col_widths(table_width, n_cols - 1, Inches(1.35))):
         table.columns[i].width = col_width
     _fill_table(table, header, shown_rows, value_decimals, show_share, Pt(header_font), Pt(body_font))
 
-    legend_top = Emu(int(_MARGIN + table_area_height + _LEGEND_GAP))
+    legend_top = Emu(int(_CONTENT_TOP + table_area_height + _LEGEND_GAP))
     legend_text = TABLE_LEGEND_WITH_SHARE if show_share else TABLE_LEGEND_NO_SHARE
     _add_table_legend(slide, table_left, legend_top, table_width, legend_text)
 
     if highlight_text:
-        text_top = Emu(int(_MARGIN + area_height + _HIGHLIGHT_GAP))
+        text_top = Emu(int(_CONTENT_TOP + area_height + _HIGHLIGHT_GAP))
         _add_highlight_textbox(slide, text_top, _HIGHLIGHT_BLOCK_HEIGHT, highlight_text)
     return slide, overflow_rows
 
@@ -327,8 +404,10 @@ def _add_table_slide(prs, header, rows_data, value_decimals, show_share):
     MAIS um slide de continuacao (`build_pptx` chama em loop ate
     esvaziar)."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_logo(slide)
+    _add_footer(slide)
     width = _SLIDE_WIDTH - 2 * _MARGIN
-    full_area_height = _SLIDE_HEIGHT - 2 * _MARGIN
+    full_area_height = Emu(int(_CONTENT_BOTTOM - _CONTENT_TOP))
     table_area_height = Emu(int(full_area_height - _LEGEND_STRIP_HEIGHT - _LEGEND_GAP))
 
     header_font, body_font, margin_pt, rows_that_fit = _fit_table(
@@ -338,14 +417,14 @@ def _add_table_slide(prs, header, rows_data, value_decimals, show_share):
 
     n_rows = len(shown_rows) + 1
     n_cols = len(header)
-    graphic_frame = slide.shapes.add_table(n_rows, n_cols, _MARGIN, _MARGIN, width, table_area_height)
+    graphic_frame = slide.shapes.add_table(n_rows, n_cols, _MARGIN, _CONTENT_TOP, width, table_area_height)
     table = graphic_frame.table
     _style_table_plain(table, n_rows, n_cols, margin_pt)
     for i, col_width in enumerate(_col_widths(width, n_cols - 1, Inches(2.8))):
         table.columns[i].width = col_width
     _fill_table(table, header, shown_rows, value_decimals, show_share, Pt(header_font), Pt(body_font))
 
-    legend_top = Emu(int(_MARGIN + table_area_height + _LEGEND_GAP))
+    legend_top = Emu(int(_CONTENT_TOP + table_area_height + _LEGEND_GAP))
     legend_text = TABLE_LEGEND_WITH_SHARE if show_share else TABLE_LEGEND_NO_SHARE
     _add_table_legend(slide, _MARGIN, legend_top, width, legend_text)
     return slide, overflow_rows
@@ -433,15 +512,18 @@ def build_price_unit_pptx(charts: list[tuple[go.Figure, str]]) -> bytes:
         img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
 
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _MARGIN, chart_area_width, area_height)
+        _add_logo(slide)
+        _add_footer(slide)
+        left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _CONTENT_TOP, chart_area_width, area_height)
         slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
 
-        txbox = slide.shapes.add_textbox(text_left, _MARGIN, text_width, area_height)
+        txbox = slide.shapes.add_textbox(text_left, _CONTENT_TOP, text_width, area_height)
         tf = txbox.text_frame
         tf.word_wrap = True
 
         heading_run = tf.paragraphs[0].add_run()
         heading_run.text = "Highlights"
+        heading_run.font.name = _FONT_NAME
         heading_run.font.bold = True
         heading_run.font.size = Pt(16)
         heading_run.font.color.rgb = _HEADER_RGB
@@ -450,6 +532,7 @@ def build_price_unit_pptx(charts: list[tuple[go.Figure, str]]) -> bytes:
         body_p.space_before = Pt(8)
         body_run = body_p.add_run()
         body_run.text = highlight_text
+        body_run.font.name = _FONT_NAME
         body_run.font.size = Pt(13)
         body_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 

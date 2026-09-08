@@ -489,10 +489,10 @@ def build_selection(
 ):
     """Retorna (categories, dimension, filters, values_override, title,
     true_totals) para a combinacao atual de quebra/filtros/regiao.
-    `true_totals` e None exceto em Submarca/Variante, onde e o total real
-    (mercado/marca inteiro) usado pra calcular participacao (MS) - o
-    grafico so mostra um top N ali, entao a soma das categorias exibidas
-    nao e mais o total de verdade. `categories_override`/`weight_indicator`:
+    `true_totals` e None exceto em Marca/Submarca/Variante, onde e o
+    total real (mercado/marca inteiro) usado pra calcular participacao
+    (MS) - o grafico so mostra um top N ali, entao a soma das categorias
+    exibidas nao e mais o total de verdade. `categories_override`/`weight_indicator`:
     ver `_apply_ranking` - usado por indicadores nao aditivos (ex.: Preco
     Medio) que reaproveitam o ranking de outro indicador em vez de
     rankear por si mesmos."""
@@ -538,8 +538,16 @@ def build_selection(
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
         values_all = _descend_to_level(indicator_id, "marca", base_filters, start_cod, {"Marca"})
         weight_all = _descend_to_level(weight_indicator, "marca", base_filters, start_cod, {"Marca"}) if weight_indicator else None
-        categories, values = _apply_ranking(values_all, top_n, categories_override=categories_override, weight_all=weight_all)
-        return categories, "marca", base_filters, values, f"{crumb} > Marcas (top {top_n})", None
+        # add_other=False (sem bucket sintetico "Outras"/"Demais outras")
+        # + true_totals real: mesmo tratamento de Submarca/Variante (ver
+        # abaixo) - o top N exibido e so um recorte, nao fecha o total
+        # sozinho, entao o grafico troca o rotulo de total/variacao por
+        # "Top N = X% do total" (ver _build_blocks)
+        categories, values = _apply_ranking(
+            values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
+        )
+        true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
+        return categories, "marca", base_filters, values, f"{crumb} > Marcas (top {top_n})", true_totals
 
     if breakdown == "submarca":
         if marca_f and marca_f != "Total":
@@ -582,6 +590,25 @@ def build_selection(
 
 def _dropdown(id_, options, value, disabled=False):
     return dcc.Dropdown(id=id_, options=[{"label": o, "value": o} for o in options], value=value, clearable=False, disabled=disabled)
+
+
+def _pptx_button(id_):
+    return html.Button(
+        [
+            html.Img(
+                src=app.get_asset_url("pptx_icon.svg"),
+                style={"height": "14px", "width": "14px", "marginRight": "6px"},
+            ),
+            "Exportar PowerPoint",
+        ],
+        id=id_,
+        n_clicks=0,
+        style={
+            "fontSize": "12.5px", "padding": "5px 10px", "cursor": "pointer",
+            "border": "1px solid #ccc", "borderRadius": "4px", "background": "white",
+            "display": "inline-flex", "alignItems": "center",
+        },
+    )
 
 
 _POSITIVE_COLOR = "#1E8E5A"
@@ -682,15 +709,7 @@ def _chart_block(key):
             html.Div(
                 style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "4px"},
                 children=[
-                    html.Button(
-                        "Exportar PowerPoint",
-                        id=f"export-btn-{key}",
-                        n_clicks=0,
-                        style={
-                            "fontSize": "12.5px", "padding": "5px 10px", "cursor": "pointer",
-                            "border": "1px solid #ccc", "borderRadius": "4px", "background": "white",
-                        },
-                    ),
+                    _pptx_button(f"export-btn-{key}"),
                     dcc.Download(id=f"download-{key}"),
                 ],
             ),
@@ -725,7 +744,13 @@ def _chart_block(key):
 app.layout = html.Div(
     style={"fontFamily": "'Roboto', -apple-system, Helvetica, Arial, sans-serif", "maxWidth": "1400px", "margin": "0 auto", "padding": "24px"},
     children=[
-        html.H2("Worldpanel Dashboard - Symrise"),
+        html.Div(
+            style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "8px"},
+            children=[
+                html.Img(src=app.get_asset_url("symrise_logo.png"), style={"height": "30px"}),
+                html.H2("Worldpanel Dashboard", style={"margin": 0}),
+            ],
+        ),
         dcc.Tabs(id="regiao-tabs", value=REGIAO_VIEWS[0], children=[dcc.Tab(label=r, value=r) for r in REGIAO_VIEWS]),
         html.Div(
             style={"margin": "16px 0 12px", "maxWidth": "260px"},
@@ -806,15 +831,7 @@ app.layout = html.Div(
                             html.Div(
                                 style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "12px"},
                                 children=[
-                                    html.Button(
-                                        "Exportar PowerPoint",
-                                        id="export-btn-price-unit",
-                                        n_clicks=0,
-                                        style={
-                                            "fontSize": "12.5px", "padding": "5px 10px", "cursor": "pointer",
-                                            "border": "1px solid #ccc", "borderRadius": "4px", "background": "white",
-                                        },
-                                    ),
+                                    _pptx_button("export-btn-price-unit"),
                                     dcc.Download(id="download-price-unit"),
                                 ],
                             ),
@@ -1066,17 +1083,29 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
             value_decimals = decimals_override if decimals_override is not None else cfg["value_decimals"]
             insight_unit_label = unit or cfg["unit_label"]
             subtitle = f"{cfg['label']} ({unit})" if unit else cfg["label"]
-            # com true_totals (Submarca/Variante = so um recorte top N), o
-            # "total" que apareceria no topo da barra/na variacao do total
-            # seria so a soma do recorte exibido, nao o total real - por
-            # isso o grafico omite os dois nesse caso
-            show_total = true_totals is None
+            # com true_totals (Marca/Submarca/Variante = so um recorte
+            # top N), o valor nominal que apareceria no topo da barra
+            # seria so a soma do recorte exibido, nao o total real (e a
+            # variacao ano a ano dessa soma nao e uma variacao de
+            # mercado de verdade) - troca os dois por coverage_pct: a
+            # soma da participacao (share) das categorias exibidas em
+            # cada ano (ex.: Fabricante A 30% + Fabricante B 15% = 45%
+            # no topo), com a "chave" entre colunas mostrando a variacao
+            # dessa cobertura em pontos percentuais (ver
+            # `alluvial_stack_chart`)
+            coverage_pct = None
+            if true_totals is not None and categories:
+                coverage_pct = {
+                    yr: (sum(values[cat][yr] for cat in categories) / true_totals[yr] * 100) if true_totals[yr] else 0.0
+                    for yr in YEARS_DEFAULT
+                }
 
             fig = alluvial_stack_chart(
                 df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
                 title=title, subtitle=subtitle, values_override=values,
                 value_scale=1.0, value_decimals=value_decimals, is_percent=cfg["is_percent"],
-                show_total=show_total, height=_chart_height(breakdown, categories),
+                show_total=bool(categories), coverage_pct=coverage_pct, true_totals=true_totals,
+                height=_chart_height(breakdown, categories),
             )
             fig.update_layout(autosize=True, width=None)
 
@@ -1211,6 +1240,21 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     subtitle = f"{INDICATORS['valor_com_presentes']['label']} em {unit_label}"
 
     result = []
+    # waterfall totalizador (soma de todas as categorias exibidas) antes
+    # dos especificos - so faz sentido em Segmento/Fabricante, onde as
+    # categorias somam o total de verdade (Segmento e exaustivo; Marca/
+    # Submarca/Variante sao so um recorte top N - ver EMBALAGEM_BREAKDOWNS
+    # tambem nao combina com esta aba)
+    if breakdown in ("segmento", "fabricante"):
+        total_unidades = {yr: sum(unidades_values[cat][yr] for cat in categories) for yr in YEARS_DEFAULT}
+        total_valor = {yr: sum(valor_values[cat][yr] for cat in categories) for yr in YEARS_DEFAULT}
+        fig = price_unit_waterfall_chart(
+            f"{title} > Total", total_unidades, total_valor,
+            unit_label=subtitle, value_decimals=value_decimals,
+        )
+        insight = generate_price_unit_insight(total_unidades, total_valor)
+        result.append(dict(cat="Total", fig=fig, insight=insight))
+
     for cat in categories:
         fig = price_unit_waterfall_chart(
             f"{title} > {cat}", unidades_values[cat], valor_values[cat],
