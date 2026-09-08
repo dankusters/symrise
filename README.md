@@ -2,15 +2,24 @@
 
 Dashboard interativo (Plotly + Dash) da evolução anual (Y2022–Y2025) dos
 indicadores de mercado de perfumaria no Brasil, a partir do relatório
-Worldpanel (Kantar), com filtros combináveis de Região, Segmento,
-Fabricante e Marca. Ver `ESCOPO.md` para o briefing original.
+Worldpanel (Kantar). Filtros combináveis de Região, Segmento,
+Fabricante, Marca, Submarca, Variante e Sub Variante, mais duas árvores
+à parte (Embalagem: Tipo e Conteúdo) que só combinam com Região. Ver
+`ESCOPO.md` para o briefing original — bastante coisa no app hoje vai
+além dele (Sub Variante, Embalagem, Price/Unit, Adições de Unidades),
+descoberta/pedida ao longo do desenvolvimento.
 
 ## Rodar localmente
 
+Projeto usa [uv](https://docs.astral.sh/uv/):
+
 ```bash
-pip install pandas openpyxl plotly kaleido dash
-python app.py
+uv sync
+uv run python app.py
 ```
+
+(ou `pip install -e .` a partir do `pyproject.toml` num venv próprio,
+depois `python app.py`)
 
 Abre em `http://127.0.0.1:8050/`.
 
@@ -31,21 +40,34 @@ Abre em `http://127.0.0.1:8050/`.
   case-insensitive, com fallback determinístico por hash para nomes não
   cadastrados). Região usa cores reais extraídas por amostragem de pixel
   da imagem de referência do escopo; Fabricante/Marca/Segmento **ainda
-  são placeholder aleatório** — substituir quando a paleta oficial
-  chegar.
+  são placeholder aleatório** — `fonte/hexa_colors.xlsx` (em andamento)
+  deve virar a paleta oficial.
 
-- **`charts.py`** — dois templates de gráfico:
+- **`charts.py`** — templates de gráfico, todos com borda preta fina
+  nas barras (`_BAR_BORDER_COLOR`/`_BAR_BORDER_WIDTH`):
   - `alluvial_stack_chart` — barras empilhadas por ano com fluxo curvo
-    (cor rebaixada) entre elas, seta em "chave" mostrando a variação %
-    ano a ano do total. Para indicadores cumulativos: Volume, Unidades,
-    Valor (com/sem presentes), Compradores, Share Unidades, Share Valor
-    com Presentes.
-  - `line_evolution_chart` — uma linha por categoria, sem empilhamento.
-    Para indicadores de taxa/média: Penetração, Vol. por Comprador,
-    Frequência, Preço Médio (Litros/Unidades).
-  - `compute_values(...)` — helper compartilhado que os dois templates
-    (e `insights.py`) usam para extrair `{categoria: {ano: valor}}` de
-    um DataFrame já filtrado.
+    (cor rebaixada) entre elas. A ordem empilhada (topo → base) é
+    recalculada ANO A ANO pelo próprio valor de cada categoria (maior
+    sempre no topo) — duas categorias podem trocar de posição de um ano
+    pro outro, cruzando o fluxo alluvial entre elas. Topo de cada
+    coluna mostra o total (+ variação % ano a ano) quando as categorias
+    somam o total de verdade, ou a soma da participação (`coverage_pct`,
+    com a "chave" em pontos percentuais) quando é só um recorte top N
+    (Marca/Submarca/Variante/Sub Variante). Para indicadores
+    cumulativos: Volume, Unidades, Valor (com/sem presentes),
+    Compradores, Share Unidades, Share Valor com Presentes.
+  - `line_evolution_chart` — uma linha por categoria, sem empilhamento,
+    sem rótulo de valor por ponto (a tabela ao lado já traz os
+    números). Eixo Y com autorange normal (aceita negativos) e linha de
+    referência em zero. Para indicadores de taxa/média: Penetração,
+    Vol. por Comprador, Frequência, Preço Médio (Litros/Unidades), e a
+    aba "Adições de Unidades".
+  - `price_unit_waterfall_chart`/`price_unit_effects` — waterfall da
+    decomposição Unidades × Preço Médio da aba "Price/Unit" (ver
+    `app.py` abaixo).
+  - `compute_values(...)` — helper compartilhado que os templates (e
+    `insights.py`) usam para extrair `{categoria: {ano: valor}}` de um
+    DataFrame já filtrado.
 
 - **`insights.py`** — `generate_insight(...)`: comentário automático
   (texto puro, sem IA generativa) que descreve a trajetória de cada
@@ -53,32 +75,61 @@ Abre em `http://127.0.0.1:8050/`.
   total, ganho/perda de participação em pontos percentuais (MS), e
   aproximação entre categorias de participação parecida que estão
   divergindo. Roda sobre os mesmos dados do gráfico, então num filtro
-  novo o texto muda junto.
+  novo o texto muda junto. `generate_price_unit_insight(...)` faz o
+  mesmo pra aba Price/Unit (atribui o crescimento/queda do Valor a cada
+  efeito, Unidades ou Preço).
 
-- **`app.py`** — app Dash: dropdowns de Indicador, Quebra (Região /
-  Segmento / Fabricante / Marca) e filtros fixos para as dimensões que
-  não estão sendo usadas como quebra. Fabricante/Marca com muitas
-  categorias usam top 6 + grupo sintético "Outros" (a diferença entre o
-  total real e a soma dos 6 maiores, para as barras sempre fecharem
-  100%).
+- **`app.py`** — app Dash: abas de Região no topo, dropdown "Quebra
+  por" (Segmento / Fabricante / Marca / Submarca / Variante / Sub
+  Variante / Embalagem Tipo / Embalagem Conteúdo) e filtros em cascata
+  (Segmento independente; Fabricante → Marca → Submarca/Variante/Sub
+  Variante) fixos pras dimensões que não estão sendo usadas como
+  quebra. Marca/Submarca/Variante/Sub Variante com muitas categorias
+  usam um seletor de top N (10/20/30), sem grupo sintético "Outros" (o
+  top N é só um recorte, não fecha 100% — daí o `coverage_pct` no
+  gráfico). Fabricante usa top 6 + "Outros" (fecha o total real).
+  Abas de indicador: Volume / Unidades / Valor com Presentes / Preço
+  Médio (gráfico + tabela de variação + legenda + Highlights, um bloco
+  por indicador) mais duas abas à parte:
+  - **Price/Unit** — um waterfall por categoria decompondo a variação
+    do Valor com Presentes em efeito Unidades × efeito Preço Médio;
+    waterfall totalizador (soma de todas as categorias) no topo quando
+    a quebra é Segmento ou Fabricante.
+  - **Adições de Unidades** — uma linha por categoria com a diferença
+    de Unidades ano a ano (2022 é a diferença sobre um zero artificial,
+    já que a planilha não tem 2021), ordenada pela maior adição em
+    2025; tabela ao lado com os mesmos números.
+
+- **`export_pptx.py`** — exporta qualquer bloco (gráfico + tabela) ou a
+  aba Price/Unit pra PowerPoint, com os MESMOS números da tela
+  (reaproveita `compute_variations`/os `dict`s de valores já
+  calculados). Logo Symrise + "Worldpanel Dashboard" no canto superior
+  esquerdo e rodapé com a fonte dos dados em todo slide; fonte Roboto
+  Condensed; tabela com "scale to fit" (encolhe fonte/margem pra caber
+  num único slide, com piso legível — o que não couber nem assim
+  transborda pra slide de continuação).
 
 ## Status atual
 
 **Feito:**
 - ETL validado (5.742 linhas, 55 colunas)
-- Os 12 indicadores do escopo cobertos pelos dois templates de gráfico
-- Comentário automático (highlights) por categoria
-- Filtros combináveis de Região/Segmento/Fabricante/Marca, com quebra
-  dinâmica e agrupamento "Outros" para Fabricante/Marca
+- Os 12 indicadores do escopo cobertos pelos templates de gráfico, mais
+  a decomposição Unidades×Preço (Price/Unit) e as adições de Unidades
+  ano a ano
+- Comentário automático (highlights) por categoria/waterfall
+- Filtros combináveis de Região/Segmento/Fabricante/Marca/Submarca/
+  Variante/Sub Variante, com quebra dinâmica; duas quebras à parte de
+  Embalagem (Tipo/Conteúdo), descobertas na planilha e não documentadas
+  no ESCOPO.md — só combinam com Região
+- Exportação PowerPoint (não PDF) com identidade visual Symrise, fiel
+  aos números da tela
 
 **Em aberto:**
 - Paleta de cores oficial de Marca/Fabricante/Segmento (hoje placeholder
-  aleatório em `colors.py`)
+  aleatório em `colors.py`) — `fonte/hexa_colors.xlsx` em preparação
 - Share Unidades / Share Valor com Presentes só funcionam quebrados por
   Segmento — a relação pai/filho do `Cód.` para esses dois indicadores
   ainda não foi resolvida para quebra por Fabricante/Marca
-- Exportação para PDF/PPTX em múltiplas folhas A4 ou slides (ESCOPO.md
-  seção 5)
-- Estilo visual do app Dash (hoje HTML padrão do Dash + fonte Roboto via
-  `assets/fonts.css`, sem CSS customizado além disso)
+- Exportação em múltiplas folhas A4 (PDF) — hoje só PowerPoint
+  (ESCOPO.md seção 5)
 - Deploy/hospedagem do app fora do ambiente local

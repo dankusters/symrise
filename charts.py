@@ -644,8 +644,15 @@ def line_evolution_chart(
             title=unit_label or None,
             showgrid=True,
             gridcolor="#eeeeee",
-            zeroline=False,
-            rangemode="tozero",
+            # zeroline visivel (nao mais rangemode="tozero", que travava
+            # o eixo em 0 mesmo com valores negativos reais - ver aba
+            # "Adicoes de Unidades", onde uma categoria pode perder
+            # volume ano a ano): autorange normal encaixa tanto valores
+            # negativos quanto positivos, com uma linha em y=0 pra
+            # referencia
+            zeroline=True,
+            zerolinecolor="#cccccc",
+            zerolinewidth=1,
         ),
         showlegend=False,
     )
