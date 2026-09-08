@@ -1,6 +1,6 @@
 """App Dash do dashboard Worldpanel: view principal por Regiao (abas),
-com filtros cruzaveis (Segmento, Fabricante, Marca, Submarca, Variante) e
-um "Quebra por" que escolhe qual dessas dimensoes vira as categorias
+com filtros cruzaveis (Segmento, Fabricante, Marca, Submarca, Variante,
+Sub Variante) e um "Quebra por" que escolhe qual dessas dimensoes vira as categorias
 empilhadas do grafico - as demais ficam fixas como filtro de valor
 unico. Cada view de regiao traz 3 blocos fixos (grafico + highlight):
 Volume, Unidades e Valor com Presentes.
@@ -49,17 +49,26 @@ SUBMARCA_BY_MARCA: dict[str, list[str]] = (
 VARIANTE_BY_MARCA: dict[str, list[str]] = (
     df.loc[df["classificacao"] == "Variante"].groupby("marca")["rotulo"].unique().apply(sorted).to_dict()
 )
+# Sub Variante: nivel abaixo de Variante, so existe pra 2 marcas (Natura,
+# Boticario - ver conversa com o usuario) - mesmo esquema flatten-por-
+# marca das demais (o dropdown, quando Marca esta fixo, mostra todas as
+# sub-variantes daquela marca, sem filtrar por Variante tambem, igual
+# Submarca/Variante ja fazem)
+SUBVARIANTE_BY_MARCA: dict[str, list[str]] = (
+    df.loc[df["classificacao"] == "Sub Variante"].groupby("marca")["rotulo"].unique().apply(sorted).to_dict()
+)
 
 # listas completas, usadas quando o filtro pai (Fabricante/Marca) esta em
 # "Total" - o dropdown do filho continua oferecendo todo mundo
 ALL_MARCAS = sorted(df.loc[df["classificacao"] == "Marca", "marca"].unique())
 ALL_SUBMARCAS = sorted(df.loc[df["classificacao"] == "Sub Marca", "rotulo"].unique())
 ALL_VARIANTES = sorted(df.loc[df["classificacao"] == "Variante", "rotulo"].unique())
+ALL_SUBVARIANTES = sorted(df.loc[df["classificacao"] == "Sub Variante", "rotulo"].unique())
 
-# ordem da cadeia Fabricante > Marca > Sub Marca > Variante, usada pra
-# decidir quais filtros ficam habilitados pra cada quebra (Segmento e um
-# eixo independente, tratado a parte)
-FILTER_DEPTH = {"fabricante": 1, "marca": 2, "submarca": 3, "variante": 4}
+# ordem da cadeia Fabricante > Marca > Sub Marca > Variante > Sub
+# Variante, usada pra decidir quais filtros ficam habilitados pra cada
+# quebra (Segmento e um eixo independente, tratado a parte)
+FILTER_DEPTH = {"fabricante": 1, "marca": 2, "submarca": 3, "variante": 4, "subvariante": 5}
 
 # quebras derivadas das arvores "T. Embalagem" (cod '3': Refil/Nao
 # Refil) e "T. Conteudos" (cod '4': faixas de volume da embalagem) -
@@ -125,7 +134,7 @@ _TOP_N = 6
 # quebras que descobrem categorias dinamicamente (Marca/Submarca/Variante
 # podem ter dezenas de itens) ganham um seletor de quantos mostrar,
 # sempre rankeados pelo ultimo ano (2025) de cada indicador
-TOP_N_BREAKDOWNS = ("marca", "submarca", "variante")
+TOP_N_BREAKDOWNS = ("marca", "submarca", "variante", "subvariante")
 TOP_N_OPTIONS = [10, 20, 30]
 TOP_N_DEFAULT = TOP_N_OPTIONS[0]
 
@@ -392,11 +401,13 @@ def _fabricante_root_cod(regiao_view, segmento_f):
     return subset.loc[subset["cod"].str.count(r"\.").idxmin(), "cod"]
 
 
-def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f):
-    """Filtros de Fabricante/Marca/Submarca/Variante/Classificacao usados
-    quando a quebra do grafico e Segmento (isto e, essas dimensoes ficam
-    fixas no nivel mais profundo escolhido, e Segmento vira a dimensao
-    variavel)."""
+def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
+    """Filtros de Fabricante/Marca/Submarca/Variante/Sub Variante/
+    Classificacao usados quando a quebra do grafico e Segmento (isto e,
+    essas dimensoes ficam fixas no nivel mais profundo escolhido, e
+    Segmento vira a dimensao variavel)."""
+    if subvariante_f and subvariante_f != "Total":
+        return {"classificacao": "Sub Variante", "fabricante": fabricante_f, "marca": marca_f, "rotulo": subvariante_f}
     if variante_f and variante_f != "Total":
         return {"classificacao": "Variante", "fabricante": fabricante_f, "marca": marca_f, "rotulo": variante_f}
     if submarca_f and submarca_f != "Total":
@@ -408,9 +419,9 @@ def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f):
     return {"classificacao": "Total", "fabricante": "Total", "marca": "Total", "cod": "1"}
 
 
-def _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f):
+def _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
     parts = [regiao_view]
-    for value in (fabricante_f, marca_f, submarca_f, variante_f):
+    for value in (fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
         if value and value != "Total":
             parts.append(value)
     return " > ".join(parts)
@@ -484,8 +495,8 @@ _EXCLUDE_FROM_RANKING = frozenset({"Outros Fabricante"})
 
 
 def build_selection(
-    breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, indicator_id, top_n=_TOP_N,
-    categories_override=None, weight_indicator=None,
+    breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, indicator_id,
+    top_n=_TOP_N, categories_override=None, weight_indicator=None,
 ):
     """Retorna (categories, dimension, filters, values_override, title,
     true_totals) para a combinacao atual de quebra/filtros/regiao.
@@ -505,16 +516,19 @@ def build_selection(
         categories, values = _embalagem_values(regiao_view, indicator_id, parent_cod)
         return categories, "rotulo", {}, values, f"{regiao_view} > {label}", None
 
-    crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f)
+    crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
 
     if breakdown == "segmento":
-        if fabricante_f == "Total" and marca_f == "Total" and submarca_f == "Total" and variante_f == "Total":
+        if (
+            fabricante_f == "Total" and marca_f == "Total" and submarca_f == "Total"
+            and variante_f == "Total" and subvariante_f == "Total"
+        ):
             # sem nenhum fabricante/marca fixo: usa o ramo cod 6.x (ver
             # _segmento_root_values) em vez do filtro generico, que so
             # enxerga 'segmento'='Total' nesse nivel da arvore
             values = _segmento_root_values(regiao_view, indicator_id)
             return SEGMENTOS, "segmento", {}, values, f"{crumb} > Segmentos", None
-        filters = {"regiao": regiao_view, **_scope_filters(fabricante_f, marca_f, submarca_f, variante_f)}
+        filters = {"regiao": regiao_view, **_scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)}
         return SEGMENTOS, "segmento", filters, None, f"{crumb} > Segmentos", None
 
     if breakdown == "fabricante":
@@ -567,8 +581,32 @@ def build_selection(
         true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
         return categories, "rotulo", base_filters, values, f"{crumb} > Submarcas (top {top_n})", true_totals
 
-    # breakdown == "variante"
-    if submarca_f and submarca_f != "Total":
+    if breakdown == "variante":
+        if submarca_f and submarca_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Sub Marca", marca=marca_f, rotulo=submarca_f)
+        elif marca_f and marca_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Marca", fabricante=fabricante_f, marca=marca_f)
+        elif fabricante_f and fabricante_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
+        else:
+            start_cod = _fabricante_root_cod(regiao_view, segmento_f)
+        values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+        weight_all = (
+            _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+            if weight_indicator else None
+        )
+        categories, values = _apply_ranking(
+            values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
+        )
+        true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
+        return categories, "rotulo", base_filters, values, f"{crumb} > Variantes (top {top_n})", true_totals
+
+    # breakdown == "subvariante" - so existe pra 2 marcas na planilha
+    # (Natura, Boticario); as demais retornam categorias vazias (ver
+    # "Sem dados para esta combinacao de filtros" na tela)
+    if variante_f and variante_f != "Total":
+        start_cod = _self_cod(regiao_view, segmento_f, "Variante", marca=marca_f, rotulo=variante_f)
+    elif submarca_f and submarca_f != "Total":
         start_cod = _self_cod(regiao_view, segmento_f, "Sub Marca", marca=marca_f, rotulo=submarca_f)
     elif marca_f and marca_f != "Total":
         start_cod = _self_cod(regiao_view, segmento_f, "Marca", fabricante=fabricante_f, marca=marca_f)
@@ -576,16 +614,16 @@ def build_selection(
         start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
     else:
         start_cod = _fabricante_root_cod(regiao_view, segmento_f)
-    values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+    values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Variante"}, _EXCLUDE_FROM_RANKING)
     weight_all = (
-        _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+        _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Sub Variante"}, _EXCLUDE_FROM_RANKING)
         if weight_indicator else None
     )
     categories, values = _apply_ranking(
         values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
     )
     true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-    return categories, "rotulo", base_filters, values, f"{crumb} > Variantes (top {top_n})", true_totals
+    return categories, "rotulo", base_filters, values, f"{crumb} > Sub Variantes (top {top_n})", true_totals
 
 
 def _dropdown(id_, options, value, disabled=False):
@@ -764,6 +802,7 @@ app.layout = html.Div(
                         {"label": "Marca", "value": "marca"},
                         {"label": "Submarca", "value": "submarca"},
                         {"label": "Variante", "value": "variante"},
+                        {"label": "Sub Variante", "value": "subvariante"},
                         {"label": "Embalagem (Tipo)", "value": "embalagem_tipo"},
                         {"label": "Embalagem (Conteúdo)", "value": "embalagem_conteudo"},
                     ],
@@ -794,6 +833,7 @@ app.layout = html.Div(
                 html.Div([html.Label("Marca"), _dropdown("marca-filter", ["Total"] + ALL_MARCAS, "Total")], style={"flex": "1", "minWidth": "160px"}),
                 html.Div([html.Label("Submarca"), _dropdown("submarca-filter", ["Total"] + ALL_SUBMARCAS, "Total")], style={"flex": "1", "minWidth": "160px"}),
                 html.Div([html.Label("Variante"), _dropdown("variante-filter", ["Total"] + ALL_VARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("Sub Variante"), _dropdown("subvariante-filter", ["Total"] + ALL_SUBVARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
             ],
         ),
         dcc.Tabs(
@@ -893,6 +933,19 @@ def update_variante_options(marca_f):
 
 
 @app.callback(
+    Output("subvariante-filter", "options"),
+    Output("subvariante-filter", "value"),
+    Input("marca-filter", "value"),
+)
+def update_subvariante_options(marca_f):
+    # mesmo flatten-por-marca de update_submarca_options/
+    # update_variante_options (nao filtra tambem por Variante/Submarca
+    # selecionados) - so tem opcoes reais pra Natura/Boticario
+    subvariantes = ALL_SUBVARIANTES if marca_f == "Total" else SUBVARIANTE_BY_MARCA.get(marca_f, [])
+    return [{"label": o, "value": o} for o in (["Total"] + subvariantes)], "Total"
+
+
+@app.callback(
     Output("segmento-filter", "disabled"),
     Output("segmento-filter", "options"),
     Output("segmento-filter", "value"),
@@ -901,6 +954,7 @@ def update_variante_options(marca_f):
     Output("marca-filter", "disabled"),
     Output("submarca-filter", "disabled"),
     Output("variante-filter", "disabled"),
+    Output("subvariante-filter", "disabled"),
     Input("dimension-dropdown", "value"),
     State("segmento-filter", "value"),
     State("fabricante-filter", "value"),
@@ -928,12 +982,13 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f):
             return False
         return FILTER_DEPTH[name] < FILTER_DEPTH[breakdown]
 
-    # Marca/Submarca/Variante nao existem no agregador Segmento="Total" -
-    # a planilha so as detalha dentro de Feminino/Masculino/Infantil/
-    # Unisex (Submarca/Variante nao tem nenhuma linha em "Total"; Marca
-    # ate tem algumas, mas misturadas com totais de fabricante reaproveitados
-    # como "marca" pela descida generica - nao e uma quebra confiavel) -
-    # por isso tira "Total" das opcoes e forca um segmento real
+    # Marca/Submarca/Variante/Sub Variante nao existem no agregador
+    # Segmento="Total" - a planilha so as detalha dentro de Feminino/
+    # Masculino/Infantil/Unisex (Submarca/Variante/Sub Variante nao tem
+    # nenhuma linha em "Total"; Marca ate tem algumas, mas misturadas
+    # com totais de fabricante reaproveitados como "marca" pela descida
+    # generica - nao e uma quebra confiavel) - por isso tira "Total" das
+    # opcoes e forca um segmento real
     if breakdown in TOP_N_BREAKDOWNS:
         segmento_options = SEGMENTOS
         segmento_value = segmento_f if segmento_f != "Total" else SEGMENTOS[0]
@@ -947,10 +1002,11 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f):
     # forca Fabricante de volta pra "Total" ao entrar em Embalagem - o
     # proprio valor "congelado" (filtro desabilitado) seria enganoso no
     # breadcrumb/insight, sugerindo um recorte que a quebra ignora por
-    # completo. O reset cascateia sozinho pra Marca/Submarca/Variante via
-    # update_marca_options/update_submarca_options/update_variante_options
-    # (ja escutam mudanca de Fabricante/Marca), sem precisar de mais
-    # Outputs aqui (evitaria erro de "duplicate callback output").
+    # completo. O reset cascateia sozinho pra Marca/Submarca/Variante/Sub
+    # Variante via update_marca_options/update_submarca_options/
+    # update_variante_options/update_subvariante_options (ja escutam
+    # mudanca de Fabricante/Marca), sem precisar de mais Outputs aqui
+    # (evitaria erro de "duplicate callback output").
     fabricante_value = "Total" if is_embalagem else fabricante_f
 
     return (
@@ -962,6 +1018,7 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f):
         not enabled("marca"),
         not enabled("submarca"),
         not enabled("variante"),
+        not enabled("subvariante"),
     )
 
 
@@ -1018,7 +1075,7 @@ def _simple_average(values, categories, years=YEARS_DEFAULT):
     return result
 
 
-def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
     """Monta os dados de cada bloco (grafico + tabela + insight) pra
     combinacao atual de quebra/filtros/regiao - {indicador: dict(...)}.
     Usado tanto pelo callback que redesenha a tela (`update_charts`)
@@ -1041,7 +1098,7 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         cfg = INDICATORS[key]
         rank_with = cfg.get("rank_with")
         categories, dim_col, filters, values_override, title, true_totals = build_selection(
-            breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, key, top_n,
+            breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, key, top_n,
             categories_override=resolved_categories.get(rank_with) if rank_with else None,
             weight_indicator=cfg.get("weight_indicator"),
         )
@@ -1129,11 +1186,12 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
     Input("marca-filter", "value"),
     Input("submarca-filter", "value"),
     Input("variante-filter", "value"),
+    Input("subvariante-filter", "value"),
     Input("top-n-selector", "value"),
 )
-def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
     blocks = _build_blocks(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
     )
 
     figs, tables, insights = [], [], []
@@ -1163,12 +1221,13 @@ def _make_export_callback(key):
         State("marca-filter", "value"),
         State("submarca-filter", "value"),
         State("variante-filter", "value"),
+        State("subvariante-filter", "value"),
         State("top-n-selector", "value"),
         prevent_initial_call=True,
     )
-    def export(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+    def export(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
         blocks = _build_blocks(
-            breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+            breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
         )
         b = blocks[key]
         insight = generate_insight(
@@ -1190,7 +1249,7 @@ for _key in INDICATOR_BLOCKS:
     _make_export_callback(_key)
 
 
-def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
     """Um waterfall por categoria (nao um unico grafico com todas juntas,
     como os outros 4 blocos): decompoe a variacao ano a ano do Valor com
     Presentes de cada categoria em efeito Unidades e efeito Preco Medio.
@@ -1205,7 +1264,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
         top_n = _TOP_N
 
     categories, dim_col, filters, valor_override, title, _ = build_selection(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
         "valor_com_presentes", top_n,
     )
     if not categories:
@@ -1220,7 +1279,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
         )
 
     _, _, _, unidades_override, _, _ = build_selection(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
         "unidades", top_n, categories_override=categories,
     )
     if unidades_override is not None:
@@ -1274,11 +1333,12 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     Input("marca-filter", "value"),
     Input("submarca-filter", "value"),
     Input("variante-filter", "value"),
+    Input("subvariante-filter", "value"),
     Input("top-n-selector", "value"),
 )
-def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
     rows = _build_price_unit_rows(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
     )
     if not rows:
         return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
@@ -1308,12 +1368,13 @@ def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, 
     State("marca-filter", "value"),
     State("submarca-filter", "value"),
     State("variante-filter", "value"),
+    State("subvariante-filter", "value"),
     State("top-n-selector", "value"),
     prevent_initial_call=True,
 )
-def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n):
+def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
     rows = _build_price_unit_rows(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, top_n,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
     )
     pptx_bytes = build_price_unit_pptx([(row["fig"], row["insight"]) for row in rows])
     return dcc.send_bytes(pptx_bytes, "Price_Unit.pptx")

@@ -45,6 +45,11 @@ YEARS_DEFAULT = ("Y2022", "Y2023", "Y2024", "Y2025")
 FONT_FAMILY = "Roboto, -apple-system, Helvetica, Arial, sans-serif"
 
 _BAR_OPACITY = 0.96
+
+# borda das barras (empilhadas e waterfall) - preta: separa visualmente
+# blocos de cor parecida
+_BAR_BORDER_COLOR = "rgba(0,0,0,0.6)"
+_BAR_BORDER_WIDTH = 1.25
 _FLOW_OPACITY = 0.6
 _FLOW_WHITEN = 0.22  # 0-1: quanto a cor do fluxo e clareada em direcao ao branco
 _BAR_HALF_WIDTH = 0.3
@@ -331,7 +336,9 @@ def alluvial_stack_chart(
                 )
             )
 
-    # barras solidas em cada ano (cor cheia)
+    # barras solidas em cada ano (cor cheia) - borda preta bem fina e
+    # suave (baixa opacidade), so pra separar visualmente blocos de cor
+    # parecida na pilha, sem chamar atencao pra si mesma
     for cat in categories:
         bar_fill = _hex_to_rgba(color_fn(cat), _BAR_OPACITY)
         for i, yr in enumerate(years):
@@ -343,7 +350,7 @@ def alluvial_stack_chart(
                     y=[y_bottom, y_top, y_top, y_bottom],
                     fill="toself",
                     mode="lines",
-                    line=dict(width=0, color=bar_fill),
+                    line=dict(width=_BAR_BORDER_WIDTH, color=_BAR_BORDER_COLOR),
                     fillcolor=bar_fill,
                     hoverinfo="skip",
                     showlegend=False,
@@ -753,9 +760,9 @@ def price_unit_waterfall_chart(
             text=bar_text,
             textposition="outside",
             textfont=dict(size=13, family=FONT_FAMILY),
-            increasing=dict(marker=dict(color=_POSITIVE["line"])),
-            decreasing=dict(marker=dict(color=_NEGATIVE["line"])),
-            totals=dict(marker=dict(color="#AFAFAF")),
+            increasing=dict(marker=dict(color=_POSITIVE["line"], line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
+            decreasing=dict(marker=dict(color=_NEGATIVE["line"], line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
+            totals=dict(marker=dict(color="#AFAFAF", line=dict(color=_BAR_BORDER_COLOR, width=_BAR_BORDER_WIDTH))),
             connector=dict(line=dict(color="rgba(150,150,150,0.5)", width=1)),
             width=0.62,
             showlegend=False,
