@@ -36,12 +36,13 @@ Abre em `http://127.0.0.1:8050/`.
   (ex.: `"O. Muriel-Cf"` → `"O. Muriel - Cf"`).
 
 - **`colors.py`** — `get_color(nome)` retorna a cor de qualquer
-  Fabricante, Marca, sub-marca, variante, Região ou Segmento (busca
-  case-insensitive, com fallback determinístico por hash para nomes não
-  cadastrados). Região usa cores reais extraídas por amostragem de pixel
-  da imagem de referência do escopo; Fabricante/Marca/Segmento **ainda
-  são placeholder aleatório** — `fonte/hexa_colors.xlsx` (em andamento)
-  deve virar a paleta oficial.
+  Fabricante, Marca, Sub Marca, Variante, Sub Variante, Embalagem,
+  Segmento ou Região (busca case-insensitive, com fallback determinístico
+  por hash para nomes não cadastrados). Região usa cores reais extraídas
+  por amostragem de pixel da imagem de referência do escopo; as demais
+  vêm de `fonte/hexa_colors.xlsx` (aba "2025"), a paleta oficial — é lida
+  a cada carregamento, então editar o hexa na planilha reflete direto no
+  dashboard, sem mexer em código.
 
 - **`charts.py`** — templates de gráfico, todos com borda preta fina
   nas barras (`_BAR_BORDER_COLOR`/`_BAR_BORDER_WIDTH`):
@@ -123,10 +124,10 @@ Abre em `http://127.0.0.1:8050/`.
   no ESCOPO.md — só combinam com Região
 - Exportação PowerPoint (não PDF) com identidade visual Symrise, fiel
   aos números da tela
+- Paleta de cores oficial de Fabricante/Marca/Sub Marca/Variante/Sub
+  Variante/Embalagem/Segmento, lida direto de `fonte/hexa_colors.xlsx`
 
 **Em aberto:**
-- Paleta de cores oficial de Marca/Fabricante/Segmento (hoje placeholder
-  aleatório em `colors.py`) — `fonte/hexa_colors.xlsx` em preparação
 - Share Unidades / Share Valor com Presentes só funcionam quebrados por
   Segmento — a relação pai/filho do `Cód.` para esses dois indicadores
   ainda não foi resolvida para quebra por Fabricante/Marca

@@ -1,74 +1,56 @@
 """
-Dicionario de cores por entidade (Fabricante, Marca, Regiao, Segmento).
+Dicionario de cores por entidade (Fabricante, Marca, Sub Marca, Variante,
+Sub Variante, Regiao, Segmento, Embalagem).
 
-BRAND_COLORS e SEGMENT_COLORS sao PLACEHOLDER: cores geradas
-aleatoriamente (seed fixa) apenas para desenvolvimento. Devem ser
-substituidas pelos valores oficiais de identidade visual quando
-disponibilizados. Mantido em arquivo separado para facil edicao manual.
+Fonte oficial: fonte/hexa_colors.xlsx, aba "2025" (colunas Fabricante/
+Marca/Classificacao/Marcas/hexa). Essa planilha e a fonte de verdade das
+cores - qualquer edicao nela (trocar um hexa, adicionar uma linha) passa
+a valer no dashboard no proximo carregamento, sem mexer neste arquivo.
+Deve ser mantida versionada no git.
 
-REGION_COLORS ja usa valores reais, extraidos por amostragem de pixel da
-imagem de referencia do escopo (fonte/"exemplo sankey e alluvium.png").
+A planilha usa "Marcas" (a mesma coluna G/"rotulo" da planilha principal,
+ver etl.py) como rotulo descritivo de QUALQUER nivel da hierarquia - para
+Sub Marca/Variante/Sub Variante ela bate exatamente com o nome usado nos
+graficos, mas para Fabricante/Marca ela traz variantes prefixadas/
+sufixadas (ex.: "T. Kenvue", "T. Kenvue-Cli") que nao existem como tal no
+dataset: la, o grafico usa o nome puro (colunas "fabricante"/"marca").
+Por isso, alem do lookup por "Marcas", indexamos tambem por essas duas
+colunas para as linhas Classificacao == "Fabricante"/"Marca". Quando um
+mesmo fabricante/marca tem mais de uma linha com hexa diferente (poucos
+casos, ex.: "Kenvue"/"Poran"/"Quimetal"/"Rugol" - a planilha tem uma cor
+pra cada quebra Cf/Cli/Cm), fica valendo a linha de rotulo mais curto (a
+linha "T. <nome>" sem sufixo, a auto-total do fabricante/marca).
 
-Uso: import e chame get_color(nome) para obter a cor de qualquer marca,
-fabricante, sub-marca, variante, regiao ou segmento.
+REGION_COLORS nao vem dessa planilha (ela nao cobre regiao): usa valores
+reais, extraidos por amostragem de pixel da imagem de referencia do
+escopo (fonte/"exemplo sankey e alluvium.png").
 
-Observacao: a planilha usa "Giovanna baby" na coluna Fabricante e
-"Giovanna Baby" na coluna Marca (mesma marca, capitalizacao diferente) -
-unificadas aqui numa unica entrada; a busca em get_color() e
-case-insensitive para nao quebrar caso outra variante de capitalizacao
-apareca na base.
+Uso: import e chame get_color(nome) para obter a cor de qualquer entidade
+(fabricante, marca, sub-marca, variante, sub-variante, embalagem,
+segmento ou regiao). A busca e case-insensitive.
 """
 
-import zlib
+from __future__ import annotations
 
-BRAND_COLORS: dict[str, str] = {
-    "Athenas Industrias": "#8D255E",
-    "Avatim": "#29AE55",
-    "Avon": "#B2CC3E",
-    "Baruel": "#D4A421",
-    "Bebe Natureza": "#92462A",
-    "Betulla": "#4CD035",
-    "Betulla Cosmeticos": "#C841B6",
-    "Boticário": "#63E029",
-    "Chimica Baruel": "#2F73CA",
-    "Ciclo Cosméticos": "#912190",
-    "Coty": "#8AC125",
-    "Eudora": "#2BA658",
-    "Flora": "#289586",
-    "Giovanna Baby": "#319AB9",
-    "Giovanna Baby - Cf": "#1DBFB4",
-    "Giovanna Baby Classic - Cli": "#D96E30",
-    "Giovanna Baby Giby Borbolet.": "#979E1F",
-    "Granado": "#D638AC",
-    "Granado Bebê": "#4E9027",
-    "Hinode": "#B62B5E",
-    "Jequiti": "#9D7525",
-    "Johnson": "#2EA7CC",
-    "Kanitz": "#A92371",
-    "Kenvue": "#2499AE",
-    "Korres": "#D5446D",
-    "Lattafa": "#E19D37",
-    "Mahogany": "#73B81E",
-    "Mary Kay": "#8BCB25",
-    "Muriel": "#29E060",
-    "Natura": "#309720",
-    "Natura&CO": "#39B332",
-    "O. Muriel - Cf": "#23689A",
-    "O. U. I": "#40C71F",
-    "Outras": "#46DF20",
-    "Outros Fabricante": "#1F96DB",
-    "Outros Fabricantes": "#87A225",
-    "P&G": "#2CDD3E",
-    "Phebo": "#21D44B",
-    "Phytoderm": "#BF27C4",
-    "Poran": "#4CCC38",
-    "Quem Disse Berenice": "#3C2790",
-    "Quimetal": "#D0C749",
-    "Rugol": "#A2D93A",
-    "Suissa": "#C87D28",
-    "Turma da Xuxa - Cli": "#199A2A",
-    "WePink": "#1DC94B",
-}
+import re
+import warnings
+import zlib
+from pathlib import Path
+
+import openpyxl
+
+HEXA_COLORS_PATH = Path(__file__).parent / "fonte" / "hexa_colors.xlsx"
+HEXA_COLORS_SHEET = "2025"
+
+# mesma correcao de nomes com hifen colado que etl.py aplica ao dataset
+# principal (ex.: "Turma Da Xuxa-Cli" -> "Turma Da Xuxa - Cli"), pra nao
+# perder o match entre a planilha de cores e o dataset por causa dessa
+# inconsistencia de formatacao na fonte
+_HYPHEN_SUFFIX_PATTERN = re.compile(r"-(C[a-zA-Z]{1,3})$")
+
+
+def _fix_hyphen_suffix(value: str) -> str:
+    return _HYPHEN_SUFFIX_PATTERN.sub(r" - \1", value)
 
 
 # Cores de Regiao: extraidas por amostragem de pixel da imagem de
@@ -88,26 +70,68 @@ REGION_COLORS: dict[str, str] = {
     "T. Brasil": "#4A4A4A",
 }
 
-# Cores de Segmento: PLACEHOLDER (nao ha referencia oficial ainda).
-SEGMENT_COLORS: dict[str, str] = {
-    "Feminino": "#D6336C",
-    "Masculino": "#1971C2",
-    "Infantil": "#F08C00",
-    "Unisex": "#37B24D",
-    "Total": "#495057",
+# Rotulos sinteticos que a propria app.py cria (nao existem na planilha):
+# o bucket "resto do ranking" de um top-N (_rank_top_n) e o "Total"
+# generico. Cinza segue a mesma convencao da planilha oficial para
+# linhas "Outros"/agregadoras; "Total" reusa o tom de "T. Brasil" acima.
+_SYNTHETIC_COLORS: dict[str, str] = {
+    "Outras": "#E0E0E0",
+    "Demais outras": "#E0E0E0",
+    "Total": "#4A4A4A",
 }
 
+
+def _load_official_colors(
+    path: Path = HEXA_COLORS_PATH, sheet: str = HEXA_COLORS_SHEET
+) -> dict[str, str]:
+    """Le fonte/hexa_colors.xlsx e monta o lookup (nome em minusculas ->
+    hexa) com as cores oficiais. Ver docstring do modulo para o motivo de
+    indexar por 3 colunas diferentes."""
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except (FileNotFoundError, OSError) as exc:
+        warnings.warn(f"Nao foi possivel ler {path} ({exc}); usando fallback de cores.")
+        return {}
+
+    by_fabricante: dict[str, tuple[str, int]] = {}
+    by_marca: dict[str, tuple[str, int]] = {}
+    by_rotulo: dict[str, str] = {}
+
+    for regiao, fabricante, marca, classificacao, rotulo, hexa, _cor in wb[sheet].iter_rows(
+        min_row=2, values_only=True
+    ):
+        if not rotulo or not hexa:
+            continue
+        rotulo = str(rotulo).strip()
+        by_rotulo.setdefault(rotulo.lower(), hexa)
+
+        if classificacao == "Fabricante" and fabricante:
+            key = _fix_hyphen_suffix(str(fabricante).strip()).lower()
+            if key not in by_fabricante or len(rotulo) < by_fabricante[key][1]:
+                by_fabricante[key] = (hexa, len(rotulo))
+        elif classificacao == "Marca" and marca:
+            key = _fix_hyphen_suffix(str(marca).strip()).lower()
+            if key not in by_marca or len(rotulo) < by_marca[key][1]:
+                by_marca[key] = (hexa, len(rotulo))
+
+    return {
+        **{k: v for k, (v, _) in by_fabricante.items()},
+        **{k: v for k, (v, _) in by_marca.items()},
+        **by_rotulo,
+    }
+
+
 _LOOKUP = {
-    name.lower(): hexcolor
-    for source in (BRAND_COLORS, REGION_COLORS, SEGMENT_COLORS)
-    for name, hexcolor in source.items()
+    **{name.lower(): hexcolor for name, hexcolor in _SYNTHETIC_COLORS.items()},
+    **_load_official_colors(),
+    **{name.lower(): hexcolor for name, hexcolor in REGION_COLORS.items()},
 }
 
 
 def get_color(name: str) -> str:
     """Retorna a cor cadastrada para a entidade (busca case-insensitive);
     gera uma cor estavel (hash-based) como fallback para nomes ainda nao
-    cadastrados (ex.: sub-marcas e variantes)."""
+    cadastrados em fonte/hexa_colors.xlsx."""
     hit = _LOOKUP.get(name.lower())
     if hit is not None:
         return hit
