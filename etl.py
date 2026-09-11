@@ -21,6 +21,9 @@ import pandas as pd
 SOURCE_PATH = "fonte/Vfinal_2026.07.06_Symrise_Worldpanel.xlsx"
 SHEET_NAME = "Relatório Completo"
 
+BODY_SPLASH_PATH = "fonte/body_splash.xlsx"
+BODY_SPLASH_SHEET = "2025"
+
 CATEGORY_COLUMNS = {
     "Região": "regiao",
     "Segmento": "segmento",
@@ -112,6 +115,19 @@ def load_raw(path: str = SOURCE_PATH, sheet_name: str = SHEET_NAME) -> pd.DataFr
     return df
 
 
+def load_body_splash(path: str = BODY_SPLASH_PATH, sheet_name: str = BODY_SPLASH_SHEET) -> pd.Series:
+    """{cod: "Sim"/"Não"} classificando cada linha (Cod.) da planilha
+    principal como produto de Body Splash ou nao - fonte separada
+    (fonte/body_splash.xlsx, aba "2025"), classificada manualmente pelo
+    usuario a partir da coluna "Marcas" (mesmo rotulo/Cod. da planilha
+    principal). Junta por Cod., nao por nome, pois o mesmo rotulo se
+    repete em Cod. diferentes (ex.: "Outros Sub Marca" aparece uma vez
+    por marca)."""
+    bs = pd.read_excel(path, sheet_name=sheet_name, usecols=["Cód.", "IsBodySplash"])
+    bs["Cód."] = bs["Cód."].astype(str).str.strip()
+    return bs.set_index("Cód.")["IsBodySplash"]
+
+
 def build_dataset(path: str = SOURCE_PATH, sheet_name: str = SHEET_NAME) -> pd.DataFrame:
     """Monta o dataframe final (wide), com tipos e escalas corrigidos."""
     df = load_raw(path, sheet_name)
@@ -149,6 +165,8 @@ def build_dataset(path: str = SOURCE_PATH, sheet_name: str = SHEET_NAME) -> pd.D
     for slug in INTEGER_INDICATORS:
         year_cols = [c for c in indicator_cols if c.startswith(f"{slug}_Y")]
         df[year_cols] = df[year_cols].round(0).astype("int64")
+
+    df["is_body_splash"] = df["cod"].map(load_body_splash()).fillna("Não")
 
     return df.reset_index(drop=True)
 

@@ -34,6 +34,15 @@ REGIAO_VIEWS = ["T. Brasil", "Sudeste", "C.Oeste", "Sul", "N+NE"]
 SEGMENTOS = ["Feminino", "Masculino", "Infantil", "Unisex"]
 
 SEGMENTO_FILTER_OPTIONS = ["Total"] + SEGMENTOS
+
+# filtro adicional independente, so faz sentido combinado com quebra por
+# Submarca/Variante/Sub Variante: a classificacao (fonte/body_splash.xlsx,
+# aba "2025", coluna IsBodySplash, juntada por Cod. em etl.load_body_splash)
+# so marca "Sim" em linhas desses 3 niveis (e seus residuais "Outros X") -
+# nenhum Fabricante/Marca inteiro e 100% Body Splash, entao filtrar por
+# esses niveis daria numeros vazios/errados (ver update_filters_disabled)
+BODY_SPLASH_OPTIONS = ["Total", "Sim", "Não"]
+BODY_SPLASH_BREAKDOWNS = ("submarca", "variante", "subvariante")
 FABRICANTE_FILTER_OPTIONS = ["Total"] + sorted(df.loc[df["classificacao"] == "Fabricante", "fabricante"].unique())
 
 # submarca e variante nao tem coluna propria: o nome fica em "rotulo" e o
@@ -319,7 +328,7 @@ def discover_top_categories(
     return _apply_ranking(values_all, top_n, other_label, categories_override=categories_override, weight_all=weight_all)
 
 
-def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, add):
+def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, add, body_splash_f="Total"):
     rows = _cod_children(scoped_df, start_cod)
     if rows.empty:
         return False
@@ -330,6 +339,13 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
 
     at_target = rows["classificacao"].isin(target_classificacoes)
     direct = rows[at_target]
+    # filtro IsBodySplash (ver BODY_SPLASH_OPTIONS): so restringe as
+    # linhas que de fato VIRAM categoria (aqui e no fallback de folha
+    # abaixo) - nunca a travessia da arvore (fabricante/marca continuam
+    # sendo descidos por inteiro, so o resultado final e que so mostra
+    # quem bate com a classificacao escolhida)
+    if body_splash_f != "Total" and not direct.empty:
+        direct = direct[direct["is_body_splash"] == body_splash_f]
     if not direct.empty:
         grouped = direct.assign(_disp=_display_names(direct, dim_col)).groupby("_disp")[year_cols].sum()
         for name, row_sum in zip(grouped.index, grouped.itertuples(index=False)):
@@ -337,8 +353,10 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
                 add(name, yr, float(value) * scale)
 
     for row in rows[~at_target].itertuples():
-        found = _descend_scoped(scale, dim_col, scoped_df, row.cod, target_classificacoes, exclude_classificacoes, year_cols, result, add)
+        found = _descend_scoped(scale, dim_col, scoped_df, row.cod, target_classificacoes, exclude_classificacoes, year_cols, result, add, body_splash_f)
         if not found:
+            if body_splash_f != "Total" and row.is_body_splash != body_splash_f:
+                continue  # folha que nao bate com o filtro IsBodySplash
             # folha antes de chegar no nivel alvo (a planilha nao detalha
             # mais fundo aqui) - a propria linha e o que ha pra mostrar
             name = getattr(row, dim_col)
@@ -350,7 +368,7 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
     return True
 
 
-def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classificacoes, exclude_classificacoes=frozenset()):
+def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classificacoes, exclude_classificacoes=frozenset(), body_splash_f="Total"):
     """{nome: {ano: valor}} de todas as entidades no "nivel alvo" (ex.:
     {"Marca"}, {"Sub Marca"} ou {"Variante"}) descendentes de `start_cod`,
     descendo recursivamente enquanto um filho ainda nao chegou la.
@@ -379,7 +397,7 @@ def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classi
     def _add(name, yr, value):
         result.setdefault(name, {y: 0.0 for y in YEARS_DEFAULT})[yr] += value
 
-    _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, _add)
+    _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, _add, body_splash_f)
     return result
 
 
@@ -529,7 +547,7 @@ _EXCLUDE_FROM_RANKING = frozenset({"Outros Fabricante"})
 
 def build_selection(
     breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, indicator_id,
-    top_n=_TOP_N, categories_override=None, weight_indicator=None,
+    top_n=_TOP_N, categories_override=None, weight_indicator=None, body_splash_f="Total",
 ):
     """Retorna (categories, dimension, filters, values_override, title,
     true_totals) para a combinacao atual de quebra/filtros/regiao.
@@ -603,9 +621,9 @@ def build_selection(
             start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
         else:
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
-        values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Marca"}, _EXCLUDE_FROM_RANKING)
+        values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Marca"}, _EXCLUDE_FROM_RANKING, body_splash_f)
         weight_all = (
-            _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Sub Marca"}, _EXCLUDE_FROM_RANKING)
+            _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Sub Marca"}, _EXCLUDE_FROM_RANKING, body_splash_f)
             if weight_indicator else None
         )
         categories, values = _apply_ranking(
@@ -623,9 +641,9 @@ def build_selection(
             start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
         else:
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
-        values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+        values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING, body_splash_f)
         weight_all = (
-            _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING)
+            _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Variante"}, _EXCLUDE_FROM_RANKING, body_splash_f)
             if weight_indicator else None
         )
         categories, values = _apply_ranking(
@@ -647,9 +665,9 @@ def build_selection(
         start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
     else:
         start_cod = _fabricante_root_cod(regiao_view, segmento_f)
-    values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Variante"}, _EXCLUDE_FROM_RANKING)
+    values_all = _descend_to_level(indicator_id, "rotulo", base_filters, start_cod, {"Sub Variante"}, _EXCLUDE_FROM_RANKING, body_splash_f)
     weight_all = (
-        _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Sub Variante"}, _EXCLUDE_FROM_RANKING)
+        _descend_to_level(weight_indicator, "rotulo", base_filters, start_cod, {"Sub Variante"}, _EXCLUDE_FROM_RANKING, body_splash_f)
         if weight_indicator else None
     )
     categories, values = _apply_ranking(
@@ -904,6 +922,7 @@ app.layout = html.Div(
                 html.Div([html.Label("Submarca"), _dropdown("submarca-filter", ["Total"] + ALL_SUBMARCAS, "Total")], style={"flex": "1", "minWidth": "160px"}),
                 html.Div([html.Label("Variante"), _dropdown("variante-filter", ["Total"] + ALL_VARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
                 html.Div([html.Label("Sub Variante"), _dropdown("subvariante-filter", ["Total"] + ALL_SUBVARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("IsBodySplash"), _dropdown("body-splash-filter", BODY_SPLASH_OPTIONS, "Total")], style={"flex": "1", "minWidth": "160px"}),
             ],
         ),
         dcc.Tabs(
@@ -1068,11 +1087,14 @@ def update_subvariante_options(marca_f):
     Output("submarca-filter", "disabled"),
     Output("variante-filter", "disabled"),
     Output("subvariante-filter", "disabled"),
+    Output("body-splash-filter", "disabled"),
+    Output("body-splash-filter", "value"),
     Input("dimension-dropdown", "value"),
     State("segmento-filter", "value"),
     State("fabricante-filter", "value"),
+    State("body-splash-filter", "value"),
 )
-def update_filters_disabled(breakdown, segmento_f, fabricante_f):
+def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
     # Segmento e um eixo independente da cadeia Fabricante>Marca>Submarca>
     # Variante: so fica desabilitado quando ele proprio e a quebra. Dentro
     # da cadeia, um filtro fica disponivel se for mais raso que a quebra
@@ -1122,6 +1144,14 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f):
     # (evitaria erro de "duplicate callback output").
     fabricante_value = "Total" if is_embalagem else fabricante_f
 
+    # IsBodySplash (ver BODY_SPLASH_OPTIONS/BODY_SPLASH_BREAKDOWNS): so
+    # existe classificacao "Sim" em linhas de Sub Marca/Variante/Sub
+    # Variante - fora dessas quebras o filtro fica travado em "Total"
+    # (mesmo racional do reset de Fabricante em Embalagem acima, sem
+    # cascata adicional aqui: o dropdown nao alimenta outro filtro)
+    body_splash_enabled = breakdown in BODY_SPLASH_BREAKDOWNS
+    body_splash_value = body_splash_f if body_splash_enabled else "Total"
+
     return (
         not enabled("segmento"),
         [{"label": o, "value": o} for o in segmento_options],
@@ -1132,6 +1162,8 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f):
         not enabled("submarca"),
         not enabled("variante"),
         not enabled("subvariante"),
+        not body_splash_enabled,
+        body_splash_value,
     )
 
 
@@ -1188,7 +1220,7 @@ def _simple_average(values, categories, years=YEARS_DEFAULT):
     return result
 
 
-def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
     """Monta os dados de cada bloco (grafico + tabela + insight) pra
     combinacao atual de quebra/filtros/regiao - {indicador: dict(...)}.
     Usado tanto pelo callback que redesenha a tela (`update_charts`)
@@ -1213,7 +1245,7 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         categories, dim_col, filters, values_override, title, true_totals = build_selection(
             breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, key, top_n,
             categories_override=resolved_categories.get(rank_with) if rank_with else None,
-            weight_indicator=cfg.get("weight_indicator"),
+            weight_indicator=cfg.get("weight_indicator"), body_splash_f=body_splash_f,
         )
         # resolve os valores uma unica vez (grafico, tabela e insight usam
         # exatamente os mesmos numeros)
@@ -1301,10 +1333,11 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
     Input("variante-filter", "value"),
     Input("subvariante-filter", "value"),
     Input("top-n-selector", "value"),
+    Input("body-splash-filter", "value"),
 )
-def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
     blocks = _build_blocks(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
     )
 
     figs, tables, insights = [], [], []
@@ -1336,11 +1369,12 @@ def _make_export_callback(key):
         State("variante-filter", "value"),
         State("subvariante-filter", "value"),
         State("top-n-selector", "value"),
+        State("body-splash-filter", "value"),
         prevent_initial_call=True,
     )
-    def export(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+    def export(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
         blocks = _build_blocks(
-            breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
+            breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
         )
         b = blocks[key]
         insight = generate_insight(
@@ -1362,7 +1396,7 @@ for _key in INDICATOR_BLOCKS:
     _make_export_callback(_key)
 
 
-def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
     """Um waterfall por categoria (nao um unico grafico com todas juntas,
     como os outros 4 blocos): decompoe a variacao ano a ano do Valor com
     Presentes de cada categoria em efeito Unidades e efeito Preco Medio.
@@ -1378,7 +1412,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
 
     categories, dim_col, filters, valor_override, title, _ = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
-        "valor_com_presentes", top_n,
+        "valor_com_presentes", top_n, body_splash_f=body_splash_f,
     )
     if not categories:
         return []
@@ -1393,7 +1427,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
 
     _, _, _, unidades_override, _, _ = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
-        "unidades", top_n, categories_override=categories,
+        "unidades", top_n, categories_override=categories, body_splash_f=body_splash_f,
     )
     if unidades_override is not None:
         unidades_values = unidades_override
@@ -1437,7 +1471,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     return result
 
 
-def _build_unit_additions_bridge(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+def _build_unit_additions_bridge(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
     """(names, deltas, totals, title) pra aba "Adicoes de Unidades
     {UNIT_ADDITIONS_YEAR0}->{UNIT_ADDITIONS_YEAR1}": `totals` = {ano:
     total de Unidades do filtro} pra essa UNICA transicao; `deltas[nome]`
@@ -1465,7 +1499,7 @@ def _build_unit_additions_bridge(breakdown, regiao_view, segmento_f, fabricante_
 
     categories, dim_col, filters, values_override, title, true_totals = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
-        "unidades", top_n,
+        "unidades", top_n, body_splash_f=body_splash_f,
     )
     if not categories:
         return [], {}, {}, title
@@ -1519,10 +1553,11 @@ def _bridge_transition_order(names, deltas):
     Input("variante-filter", "value"),
     Input("subvariante-filter", "value"),
     Input("top-n-selector", "value"),
+    Input("body-splash-filter", "value"),
 )
-def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
     rows = _build_price_unit_rows(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
     )
     if not rows:
         return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
@@ -1554,11 +1589,12 @@ def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, 
     State("variante-filter", "value"),
     State("subvariante-filter", "value"),
     State("top-n-selector", "value"),
+    State("body-splash-filter", "value"),
     prevent_initial_call=True,
 )
-def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
     rows = _build_price_unit_rows(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
     )
     pptx_bytes = build_price_unit_pptx([(row["fig"], row["insight"]) for row in rows])
     return dcc.send_bytes(pptx_bytes, "Price_Unit.pptx")
@@ -1577,10 +1613,11 @@ def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f
     Input("variante-filter", "value"),
     Input("subvariante-filter", "value"),
     Input("top-n-selector", "value"),
+    Input("body-splash-filter", "value"),
 )
-def update_unit_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n):
+def update_unit_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
     names, deltas, totals, title = _build_unit_additions_bridge(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n,
+        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
     )
     cfg = INDICATORS["unidades"]
     order = _bridge_transition_order(names, deltas) if names else []
