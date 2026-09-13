@@ -39,7 +39,7 @@ import math
 
 import plotly.graph_objects as go
 
-from colors import get_color
+from colors import contrast_text_color, get_color, readable_foreground
 
 YEARS_DEFAULT = ("Y2022", "Y2023", "Y2024", "Y2025")
 
@@ -56,8 +56,14 @@ _BAR_BORDER_WIDTH = 1.25
 # cor das barras "total"/"absolute" (pilares) nos waterfalls - cinza,
 # nao a cor de nenhuma categoria especifica
 _TOTAL_BAR_COLOR = "#AFAFAF"
-_FLOW_OPACITY = 0.6
-_FLOW_WHITEN = 0.22  # 0-1: quanto a cor do fluxo e clareada em direcao ao branco
+_FLOW_OPACITY = 0.72
+_FLOW_WHITEN = 0.10  # 0-1: quanto a cor do fluxo e clareada em direcao ao branco
+# fracao do seam_eps (usado para colar flow<->barra sem linha de anti-
+# aliasing) aplicada tambem entre bandas de fluxo adjacentes (categorias
+# vizinhas na pilha): full seam_eps ali sobrepoe as duas bandas semi-
+# transparentes numa faixa perceptivel; uma fracao bem menor ainda evita
+# o gap mas quase nao sobrepoe
+_FLOW_SEAM_FACTOR = 0.2
 _BAR_HALF_WIDTH = 0.3
 _CURVE_POINTS = 40
 
@@ -318,6 +324,7 @@ def alluvial_stack_chart(
     # linha branca de anti-aliasing na costura, mesmo com bottom/top
     # matematicamente iguais
     seam_eps = max(totals.values()) * 0.004 if totals else 0.0
+    flow_seam_eps = seam_eps * _FLOW_SEAM_FACTOR
 
     # fluxo entre anos (cor rebaixada) primeiro, para as barras ficarem
     # por cima e com as bordas bem definidas
@@ -328,10 +335,10 @@ def alluvial_stack_chart(
             xs, ys = _band_polygon(
                 x_positions[i] + _BAR_HALF_WIDTH,
                 x_positions[i + 1] - _BAR_HALF_WIDTH,
-                bottom[cat][yr0] - seam_eps,
-                top[cat][yr0] + seam_eps,
-                bottom[cat][yr1] - seam_eps,
-                top[cat][yr1] + seam_eps,
+                bottom[cat][yr0] - flow_seam_eps,
+                top[cat][yr0] + flow_seam_eps,
+                bottom[cat][yr1] - flow_seam_eps,
+                top[cat][yr1] + flow_seam_eps,
             )
             fig.add_trace(
                 go.Scatter(
@@ -389,7 +396,7 @@ def alluvial_stack_chart(
                 text=label,
                 showarrow=False,
                 xanchor="center",
-                font=dict(color="white", size=13 if ratio >= 0.08 else 10),
+                font=dict(color=contrast_text_color(color_fn(cat)), size=13 if ratio >= 0.08 else 10),
                 align="center",
             )
 
@@ -487,12 +494,13 @@ def alluvial_stack_chart(
     label_x = bar_edge_x + 0.2
     for cat in categories:
         mid = (bottom[cat][last] + top[cat][last]) / 2
+        label_color = readable_foreground(color_fn(cat))
         fig.add_trace(
             go.Scatter(
                 x=[line_x0, line_x1],
                 y=[mid, mid],
                 mode="lines",
-                line=dict(color=_hex_to_rgba(color_fn(cat), 0.55), width=0.8),
+                line=dict(color=_hex_to_rgba(label_color, 0.55), width=0.8),
                 hoverinfo="skip",
                 showlegend=False,
             )
@@ -503,7 +511,7 @@ def alluvial_stack_chart(
             text=cat,
             showarrow=False,
             xanchor="left",
-            font=dict(color=color_fn(cat), size=11),
+            font=dict(color=label_color, size=11),
         )
 
     header = title if not subtitle else f"{title}<br><span style='font-size:13px;color:#666'>{subtitle}</span>"
@@ -570,7 +578,7 @@ def line_evolution_chart(
     # ao lado do fim da linha (em vez de legenda padrao do Plotly), pra
     # nao disputar espaco com o titulo.
     for cat in categories:
-        color = color_fn(cat)
+        color = readable_foreground(color_fn(cat))
         y_values = [values[cat][yr] for yr in years]
         fig.add_trace(
             go.Scatter(

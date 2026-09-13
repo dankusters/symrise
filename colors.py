@@ -140,6 +140,66 @@ def get_color(name: str) -> str:
     return hsl_to_hex(h, 65, 45)
 
 
+_BRIGHTNESS_THRESHOLD = 150  # 0-255; abaixo disso o fundo e "escuro o bastante" pra texto claro
+
+
+def _perceived_brightness(hexcolor: str) -> float:
+    """Brilho percebido (formula YIQ, ponderada pela sensibilidade do
+    olho a cada canal) de uma cor hex, 0 (preto) a 255 (branco)."""
+    hexcolor = hexcolor.lstrip("#")
+    r, g, b = (int(hexcolor[i : i + 2], 16) for i in (0, 2, 4))
+    return (r * 299 + g * 587 + b * 114) / 1000
+
+
+def contrast_text_color(hexcolor: str, dark: str = "#222222", light: str = "#FFFFFF") -> str:
+    """Retorna `dark` ou `light` (texto), o que le legivel sobre um fundo
+    `hexcolor` - pelo brilho percebido, em vez de uma regra fixa (sempre
+    branco) ou uma coluna cadastrada cor a cor: cobre tanto as cores
+    oficiais de fonte/hexa_colors.xlsx quanto o fallback hash-based de
+    get_color(), sem precisar manter nada extra sincronizado."""
+    return dark if _perceived_brightness(hexcolor) > _BRIGHTNESS_THRESHOLD else light
+
+
+_MAX_FOREGROUND_LIGHTNESS = 55  # 0-100; teto de luminosidade HSL pra cor usada como texto/linha
+
+
+def _rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
+    """Conversao RGB (0-255) -> HSL (h: 0-360, s/l: 0-100)."""
+    r, g, b = r / 255, g / 255, b / 255
+    mx, mn = max(r, g, b), min(r, g, b)
+    l = (mx + mn) / 2
+    if mx == mn:
+        return 0.0, 0.0, l * 100
+    d = mx - mn
+    s = d / (2 - mx - mn) if l > 0.5 else d / (mx + mn)
+    if mx == r:
+        h = (g - b) / d % 6
+    elif mx == g:
+        h = (b - r) / d + 2
+    else:
+        h = (r - g) / d + 4
+    return h * 60, s * 100, l * 100
+
+
+def readable_foreground(hexcolor: str, max_lightness: int = _MAX_FOREGROUND_LIGHTNESS) -> str:
+    """Escurece `hexcolor` ate `max_lightness` (HSL), preservando matiz e
+    saturacao, quando ela e clara demais pra servir de cor de texto/linha
+    sobre fundo branco (ex.: rotulo de categoria, traco de line chart).
+    Cores ja escuras o bastante voltam inalteradas. Diferente de
+    `contrast_text_color` (que escolhe entre preto/branco fixos pra texto
+    sobre uma cor de FUNDO), aqui a cor da propria categoria continua
+    reconhecivel, so um pouco mais escura."""
+    h, s, l = _rgb_to_hsl(*_hex_to_rgb(hexcolor))
+    if l <= max_lightness:
+        return hexcolor
+    return hsl_to_hex(round(h), round(s), max_lightness)
+
+
+def _hex_to_rgb(hexcolor: str) -> tuple[int, int, int]:
+    hexcolor = hexcolor.lstrip("#")
+    return tuple(int(hexcolor[i : i + 2], 16) for i in (0, 2, 4))
+
+
 def hsl_to_hex(h: int, s: int, l: int) -> str:
     """Conversao HSL -> hex (h: 0-360, s/l: 0-100)."""
     s /= 100
