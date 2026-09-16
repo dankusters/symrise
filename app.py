@@ -541,18 +541,39 @@ def _cod_own_values(indicator, cod, base_filters):
     return {yr: float(row[f"{indicator}_{yr}"]) * scale for yr in YEARS_DEFAULT}
 
 
-def _regiao_root_values(indicator):
-    """{regiao: {ano: valor}} do total de mercado (cod '1' = T.
-    Perfumaria, com Segmento/Fabricante/Marca em 'Total') em cada regiao
-    real de REGIOES_BREAKDOWN_CATEGORIES - usado pela aba "Regioes" (ver
+def _regiao_root_values(
+    indicator, segmento_f="Total", fabricante_f="Total", marca_f="Total", submarca_f="Total",
+    variante_f="Total", subvariante_f="Total", body_splash_f="Total",
+):
+    """{regiao: {ano: valor}} do escopo atual (Segmento/Fabricante/Marca/
+    Submarca/Variante/Sub Variante/IsBodySplash - todos filtros livres,
+    ver update_filters_disabled) em cada regiao real de
+    REGIOES_BREAKDOWN_CATEGORIES - usado pela aba "Regioes" (ver
     REGIOES_TAB_KEY), que quebra os indicadores por regiao em vez de
-    Segmento/Fabricante/Marca/etc. Reusa `_cod_own_values` (mesma linha
-    que da o total real de um recorte top N) fixando cod="1" pra cada
-    regiao."""
-    return {
-        regiao: _cod_own_values(indicator, "1", {"regiao": regiao})
-        for regiao in REGIOES_BREAKDOWN_CATEGORIES
-    }
+    Segmento/Fabricante/etc. Sem nenhum filtro fixo (todos em "Total"),
+    `_selection_start_cod` cai no agregador raiz (cod '1'/'5'/'6', todos
+    com o mesmo valor proprio - o total do mercado inteiro).
+
+    IsBodySplash so e aplicado quando o filtro mais fundo da cadeia
+    (Submarca/Variante/Sub Variante) esta fixo - e so nesses niveis que
+    a classificacao existe de verdade (mesma restricao de
+    BODY_SPLASH_BREAKDOWNS); fora disso o filtro fica travado em "Total"
+    pela UI, mas o parametro e ignorado aqui tambem por seguranca."""
+    body_splash_active = body_splash_f in (_BODY_SPLASH_LABEL, _NOT_BODY_SPLASH_LABEL) and (
+        (submarca_f and submarca_f != "Total") or (variante_f and variante_f != "Total")
+        or (subvariante_f and subvariante_f != "Total")
+    )
+    values = {}
+    for regiao in REGIOES_BREAKDOWN_CATEGORIES:
+        start_cod = _selection_start_cod(
+            regiao, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
+        )
+        base_filters = {"regiao": regiao, "segmento": segmento_f}
+        if body_splash_active:
+            values[regiao] = _body_splash_values(indicator, base_filters, start_cod)[body_splash_f]
+        else:
+            values[regiao] = _cod_own_values(indicator, start_cod, base_filters)
+    return values
 
 
 def _self_cod(regiao_view, segmento_f, classificacao, fabricante=None, marca=None, rotulo=None):
@@ -587,6 +608,27 @@ def _fabricante_root_cod(regiao_view, segmento_f):
     if subset.empty:
         return None
     return subset.loc[subset["cod"].str.count(r"\.").idxmin(), "cod"]
+
+
+def _selection_start_cod(regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
+    """Cod. do no "proprio" da cadeia Fabricante > Marca > Sub Marca >
+    Variante > Sub Variante, parando no nivel mais fundo fixado (ou no
+    agregador de fabricantes do segmento, se nenhum estiver fixo) - mesma
+    cascata usada pelas quebras Body Splash e Sub Variante em
+    `build_selection`. Usado pela aba "Regioes" (ver REGIOES_TAB_KEY)
+    pra achar, em cada regiao, a linha cujo valor "proprio" corresponde
+    aos filtros atuais, antes de quebrar por regiao."""
+    if subvariante_f and subvariante_f != "Total":
+        return _self_cod(regiao_view, segmento_f, "Sub Variante", marca=marca_f, rotulo=subvariante_f)
+    if variante_f and variante_f != "Total":
+        return _self_cod(regiao_view, segmento_f, "Variante", marca=marca_f, rotulo=variante_f)
+    if submarca_f and submarca_f != "Total":
+        return _self_cod(regiao_view, segmento_f, "Sub Marca", marca=marca_f, rotulo=submarca_f)
+    if marca_f and marca_f != "Total":
+        return _self_cod(regiao_view, segmento_f, "Marca", fabricante=fabricante_f, marca=marca_f)
+    if fabricante_f and fabricante_f != "Total":
+        return _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
+    return _fabricante_root_cod(regiao_view, segmento_f)
 
 
 def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
@@ -701,11 +743,16 @@ def build_selection(
     inclui (True) ou descarta (False) o bloco sintetico "Demais
     Fabricantes" com o resto do ranking (ver `discover_top_categories`)."""
     if regiao_view == REGIOES_TAB_KEY:
-        # aba "Regioes" (ver REGIOES_TAB_KEY): ignora `breakdown` e todos
-        # os filtros (a UI ja os desabilita) - a quebra e sempre a
-        # propria regiao, sobre o mercado inteiro
-        values = _regiao_root_values(indicator_id)
-        return REGIOES_BREAKDOWN_CATEGORIES, "regiao", {}, values, "Regiões", None
+        # aba "Regioes" (ver REGIOES_TAB_KEY): ignora `breakdown` (a UI
+        # ja desabilita "Quebra por") - a quebra e sempre a propria
+        # regiao - mas os demais filtros continuam livres (ver
+        # update_filters_disabled), restringindo o escopo em cada
+        # regiao antes de quebrar (ver _regiao_root_values)
+        crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
+        values = _regiao_root_values(
+            indicator_id, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, body_splash_f,
+        )
+        return REGIOES_BREAKDOWN_CATEGORIES, "regiao", {}, values, crumb, None
 
     if breakdown in EMBALAGEM_BREAKDOWNS:
         # Segmento/Fabricante/Marca/Submarca/Variante nao existem pra
@@ -1277,52 +1324,40 @@ def update_subvariante_options(marca_f):
     return [{"label": o, "value": o} for o in (["Total"] + subvariantes)], "Total"
 
 
+# Dividido em 2 callbacks pra evitar dependencia circular: este aqui
+# reage a mudancas em Submarca/Variante/Sub Variante (pra reforcar
+# Segmento real assim que um deles for fixado na aba "Regioes" - ver
+# abaixo), mas NAO pode ser o mesmo callback que forca Fabricante de
+# volta pra "Total" (proximo, `update_chain_filters_disabled`): esse
+# outro Output alimenta Marca (update_marca_options) -> Submarca
+# (update_submarca_options), e Submarca como Input aqui fecharia um
+# ciclo Fabricante -> Marca -> Submarca -> este callback -> Fabricante.
 @app.callback(
     Output("dimension-dropdown", "disabled"),
     Output("segmento-filter", "disabled"),
     Output("segmento-filter", "options"),
     Output("segmento-filter", "value"),
-    Output("fabricante-filter", "disabled"),
-    Output("fabricante-filter", "value"),
-    Output("marca-filter", "disabled"),
-    Output("submarca-filter", "disabled"),
-    Output("variante-filter", "disabled"),
-    Output("subvariante-filter", "disabled"),
     Output("body-splash-filter", "disabled"),
     Output("body-splash-filter", "value"),
     Input("dimension-dropdown", "value"),
     Input("regiao-tabs", "value"),
+    Input("submarca-filter", "value"),
+    Input("variante-filter", "value"),
+    Input("subvariante-filter", "value"),
     State("segmento-filter", "value"),
-    State("fabricante-filter", "value"),
     State("body-splash-filter", "value"),
 )
-def update_filters_disabled(breakdown, regiao_view, segmento_f, fabricante_f, body_splash_f):
+def update_segmento_and_bodysplash(breakdown, regiao_view, submarca_f, variante_f, subvariante_f, segmento_f, body_splash_f):
     # Segmento e um eixo independente da cadeia Fabricante>Marca>Submarca>
-    # Variante: so fica desabilitado quando ele proprio e a quebra. Dentro
-    # da cadeia, um filtro fica disponivel se for mais raso que a quebra
-    # ativa (ancestral dela) ou se a quebra for Segmento OU Body Splash (a
-    # cadeia toda vira filtro nos dois casos - Body Splash desce ate onde
-    # o filtro fixar, ver build_selection); a propria quebra e os niveis
-    # mais fundos ficam desabilitados (nao faz sentido fixar Submarca
-    # enquanto quebra por Marca, por exemplo). Embalagem (Tipo/Conteudo)
-    # so combina com Regiao (ver EMBALAGEM_BREAKDOWNS): desabilita a
-    # cadeia inteira e Segmento juntos, sem excecao. Aba "Regioes" (ver
-    # REGIOES_TAB_KEY) nao combina com "Quebra por" nem com filtro
-    # nenhum: desabilita tudo, dropdown incluso (so essa aba mexe nele -
-    # as demais quebras nunca desabilitam "Quebra por" em si).
+    # Variante: so fica desabilitado quando ele proprio e a quebra.
+    # Embalagem (Tipo/Conteudo) so combina com Regiao (ver
+    # EMBALAGEM_BREAKDOWNS): desabilita Segmento tambem, sem excecao.
+    # Aba "Regioes" (ver REGIOES_TAB_KEY) so desabilita "Quebra por" (nao
+    # ha quebra por Segmento/Fabricante/etc ali, so por regiao) -
+    # Segmento fica livre como mais um filtro (ver
+    # _regiao_root_values/_selection_start_cod).
     is_regioes = regiao_view == REGIOES_TAB_KEY
     is_embalagem = breakdown in EMBALAGEM_BREAKDOWNS
-
-    def enabled(name):
-        if is_regioes or is_embalagem:
-            return False
-        if name == "segmento":
-            return breakdown != "segmento"
-        if breakdown in ("segmento", BODY_SPLASH_BREAKDOWN_KEY):
-            return True
-        if breakdown == name:
-            return False
-        return FILTER_DEPTH[name] < FILTER_DEPTH[breakdown]
 
     # Marca/Submarca/Variante/Sub Variante nao existem no agregador
     # Segmento="Total" - a planilha so as detalha dentro de Feminino/
@@ -1333,50 +1368,105 @@ def update_filters_disabled(breakdown, regiao_view, segmento_f, fabricante_f, bo
     # opcoes e forca um segmento real. Body Splash tem a mesma restricao
     # (is_body_splash so existe em linhas de Submarca/Variante/Sub
     # Variante, ausentes em Segmento="Total" - ver SEGMENT_REQUIRED_BREAKDOWNS).
+    # Regioes so entra nessa restricao quando o proprio FILTRO (nao a
+    # quebra, que nao existe ali) desce ate Submarca/Variante/Sub
+    # Variante - Marca/Fabricante fixos continuam OK com Segmento="Total"
+    # (ver _selection_start_cod, validado contra o true_totals das
+    # quebras normais); a mesma condicao tambem libera IsBodySplash.
     if is_regioes:
-        segmento_options = SEGMENTO_FILTER_OPTIONS
-        segmento_value = "Total"
+        regioes_deep_filter = (
+            (submarca_f and submarca_f != "Total") or (variante_f and variante_f != "Total")
+            or (subvariante_f and subvariante_f != "Total")
+        )
+        if regioes_deep_filter:
+            segmento_options = SEGMENTOS
+            segmento_value = segmento_f if segmento_f != "Total" else SEGMENTOS[0]
+        else:
+            segmento_options = SEGMENTO_FILTER_OPTIONS
+            segmento_value = segmento_f
+        body_splash_enabled = regioes_deep_filter
     elif breakdown in SEGMENT_REQUIRED_BREAKDOWNS:
         segmento_options = SEGMENTOS
         segmento_value = segmento_f if segmento_f != "Total" else SEGMENTOS[0]
+        body_splash_enabled = breakdown in BODY_SPLASH_BREAKDOWNS
     elif is_embalagem:
         segmento_options = SEGMENTO_FILTER_OPTIONS
         segmento_value = "Total"
+        body_splash_enabled = False
     else:
         segmento_options = SEGMENTO_FILTER_OPTIONS
         segmento_value = segmento_f
+        body_splash_enabled = False
 
-    # forca Fabricante de volta pra "Total" ao entrar em Embalagem/Regioes
-    # - o proprio valor "congelado" (filtro desabilitado) seria enganoso
-    # no breadcrumb/insight, sugerindo um recorte que a quebra ignora por
-    # completo. O reset cascateia sozinho pra Marca/Submarca/Variante/Sub
-    # Variante via update_marca_options/update_submarca_options/
-    # update_variante_options/update_subvariante_options (ja escutam
-    # mudanca de Fabricante/Marca), sem precisar de mais Outputs aqui
-    # (evitaria erro de "duplicate callback output").
-    fabricante_value = "Total" if (is_regioes or is_embalagem) else fabricante_f
-
-    # IsBodySplash (ver BODY_SPLASH_OPTIONS/BODY_SPLASH_BREAKDOWNS): so
-    # existe classificacao "Sim" em linhas de Sub Marca/Variante/Sub
-    # Variante - fora dessas quebras o filtro fica travado em "Total"
-    # (mesmo racional do reset de Fabricante em Embalagem acima, sem
-    # cascata adicional aqui: o dropdown nao alimenta outro filtro)
-    body_splash_enabled = (not is_regioes) and breakdown in BODY_SPLASH_BREAKDOWNS
+    segmento_enabled = is_regioes or ((not is_embalagem) and breakdown != "segmento")
     body_splash_value = body_splash_f if body_splash_enabled else "Total"
 
     return (
         is_regioes,
-        not enabled("segmento"),
+        not segmento_enabled,
         [{"label": o, "value": o} for o in segmento_options],
         segmento_value,
+        not body_splash_enabled,
+        body_splash_value,
+    )
+
+
+@app.callback(
+    Output("fabricante-filter", "disabled"),
+    Output("fabricante-filter", "value"),
+    Output("marca-filter", "disabled"),
+    Output("submarca-filter", "disabled"),
+    Output("variante-filter", "disabled"),
+    Output("subvariante-filter", "disabled"),
+    Input("dimension-dropdown", "value"),
+    Input("regiao-tabs", "value"),
+    State("fabricante-filter", "value"),
+)
+def update_chain_filters_disabled(breakdown, regiao_view, fabricante_f):
+    # Dentro da cadeia Fabricante>Marca>Submarca>Variante>Sub Variante,
+    # um filtro fica disponivel se for mais raso que a quebra ativa
+    # (ancestral dela) ou se a quebra for Segmento OU Body Splash (a
+    # cadeia toda vira filtro nos dois casos - Body Splash desce ate onde
+    # o filtro fixar, ver build_selection); a propria quebra e os niveis
+    # mais fundos ficam desabilitados (nao faz sentido fixar Submarca
+    # enquanto quebra por Marca, por exemplo). Embalagem (Tipo/Conteudo)
+    # desabilita a cadeia inteira, sem excecao. Aba "Regioes" (ver
+    # REGIOES_TAB_KEY) libera a cadeia inteira como filtro (mesmo
+    # tratamento de quebra=="segmento" - ver update_segmento_and_bodysplash
+    # pro forcamento de Segmento quando Submarca/Variante/Sub Variante
+    # estiver fixo).
+    is_regioes = regiao_view == REGIOES_TAB_KEY
+    is_embalagem = breakdown in EMBALAGEM_BREAKDOWNS
+
+    def enabled(name):
+        if is_regioes:
+            return True
+        if is_embalagem:
+            return False
+        if breakdown in ("segmento", BODY_SPLASH_BREAKDOWN_KEY):
+            return True
+        if breakdown == name:
+            return False
+        return FILTER_DEPTH[name] < FILTER_DEPTH[breakdown]
+
+    # forca Fabricante de volta pra "Total" so ao entrar em Embalagem - o
+    # proprio valor "congelado" (filtro desabilitado) seria enganoso no
+    # breadcrumb/insight, sugerindo um recorte que a quebra ignora por
+    # completo. Regioes nao reseta (o filtro continua habilitado/util
+    # ali). O reset cascateia sozinho pra Marca/Submarca/Variante/Sub
+    # Variante via update_marca_options/update_submarca_options/
+    # update_variante_options/update_subvariante_options (ja escutam
+    # mudanca de Fabricante/Marca), sem precisar de mais Outputs aqui
+    # (evitaria erro de "duplicate callback output").
+    fabricante_value = "Total" if is_embalagem else fabricante_f
+
+    return (
         not enabled("fabricante"),
         fabricante_value,
         not enabled("marca"),
         not enabled("submarca"),
         not enabled("variante"),
         not enabled("subvariante"),
-        not body_splash_enabled,
-        body_splash_value,
     )
 
 

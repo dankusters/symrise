@@ -101,15 +101,20 @@ Abre em `http://127.0.0.1:8050/`.
 
 - **`app.py`** — app Dash: abas de Região no topo (T. Brasil / Sudeste /
   C.Oeste / Sul / N+NE), mais uma aba extra, **Regiões**
-  (`REGIOES_TAB_KEY`), que não fixa nenhuma região: quebra o mercado
-  inteiro (Segmento/Fabricante/Marca em "Total") pelas 4 regiões reais
-  (exclui T. Brasil, que é a soma delas — ver
-  `REGIOES_BREAKDOWN_CATEGORIES`/`_regiao_root_values`). Com essa aba
-  ativa, "Quebra por" e todos os filtros (Segmento, Fabricante, Marca,
-  Submarca, Variante, Sub Variante, IsBodySplash) ficam desabilitados —
-  só os indicadores continuam interativos, exatamente como as demais
-  views, incluindo Price/Unit e Adições (que também passam a quebrar
-  por região). Dropdown "Quebra
+  (`REGIOES_TAB_KEY`), que não fixa nenhuma região: quebra o escopo
+  filtrado pelas 4 regiões reais (exclui T. Brasil, que é a soma delas —
+  ver `REGIOES_BREAKDOWN_CATEGORIES`/`_regiao_root_values`). Só "Quebra
+  por" fica desabilitado nessa aba (não há quebra por Segmento/
+  Fabricante/etc ali, só por região); os demais filtros (Segmento,
+  Fabricante, Marca, Submarca, Variante, Sub Variante) ficam livres,
+  tratados como na quebra "Segmento" (cadeia inteira disponível como
+  recorte antes de quebrar por região — ver `_selection_start_cod`).
+  IsBodySplash segue a mesma regra do resto do app: só habilita quando
+  Submarca/Variante/Sub Variante está fixo (única granularidade onde a
+  classificação existe), e nesse caso Segmento também é forçado pra um
+  valor real (não "Total"), mesma restrição de
+  `SEGMENT_REQUIRED_BREAKDOWNS`. Vale pra Price/Unit e Adições também
+  (que passam a quebrar por região do mesmo jeito). Dropdown "Quebra
   por" (Segmento / Fabricante / Marca / Submarca / Variante / Sub
   Variante / Body Splash / Embalagem Tipo / Embalagem Conteúdo) e
   filtros em cascata (Segmento independente; Fabricante → Marca →
