@@ -99,7 +99,17 @@ Abre em `http://127.0.0.1:8050/`.
   X milhões" vs. "O total de Valor com Presentes cresceu R$ X milhões" —
   unidades monetárias ficam com o "R$" antes do número, não depois).
 
-- **`app.py`** — app Dash: abas de Região no topo, dropdown "Quebra
+- **`app.py`** — app Dash: abas de Região no topo (T. Brasil / Sudeste /
+  C.Oeste / Sul / N+NE), mais uma aba extra, **Regiões**
+  (`REGIOES_TAB_KEY`), que não fixa nenhuma região: quebra o mercado
+  inteiro (Segmento/Fabricante/Marca em "Total") pelas 4 regiões reais
+  (exclui T. Brasil, que é a soma delas — ver
+  `REGIOES_BREAKDOWN_CATEGORIES`/`_regiao_root_values`). Com essa aba
+  ativa, "Quebra por" e todos os filtros (Segmento, Fabricante, Marca,
+  Submarca, Variante, Sub Variante, IsBodySplash) ficam desabilitados —
+  só os indicadores continuam interativos, exatamente como as demais
+  views, incluindo Price/Unit e Adições (que também passam a quebrar
+  por região). Dropdown "Quebra
   por" (Segmento / Fabricante / Marca / Submarca / Variante / Sub
   Variante / Body Splash / Embalagem Tipo / Embalagem Conteúdo) e
   filtros em cascata (Segmento independente; Fabricante → Marca →

@@ -31,6 +31,18 @@ from insights import generate_insight, generate_price_unit_insight, generate_uni
 df = build_dataset()
 
 REGIAO_VIEWS = ["T. Brasil", "Sudeste", "C.Oeste", "Sul", "N+NE"]
+
+# aba extra ao lado das views de Regiao (REGIAO_VIEWS): em vez de fixar
+# uma regiao e quebrar por Segmento/Fabricante/etc, quebra o mercado
+# INTEIRO (Segmento/Fabricante/Marca = "Total", ver _regiao_root_values)
+# pelas proprias regioes - pesos e variacoes por regiao. Nao e um valor
+# de REGIAO_VIEWS porque nao fixa regiao nenhuma; "Quebra por" e todos
+# os filtros ficam desabilitados (nao combinam com essa quebra, ver
+# update_filters_disabled/update_dimension_dropdown_disabled). Exclui
+# "T. Brasil" das categorias exibidas (e a soma das outras 4, entraria
+# como mais uma barra dentro do proprio total).
+REGIOES_TAB_KEY = "Regiões"
+REGIOES_BREAKDOWN_CATEGORIES = [r for r in REGIAO_VIEWS if r != "T. Brasil"]
 SEGMENTOS = ["Feminino", "Masculino", "Infantil", "Unisex"]
 
 SEGMENTO_FILTER_OPTIONS = ["Total"] + SEGMENTOS
@@ -529,6 +541,20 @@ def _cod_own_values(indicator, cod, base_filters):
     return {yr: float(row[f"{indicator}_{yr}"]) * scale for yr in YEARS_DEFAULT}
 
 
+def _regiao_root_values(indicator):
+    """{regiao: {ano: valor}} do total de mercado (cod '1' = T.
+    Perfumaria, com Segmento/Fabricante/Marca em 'Total') em cada regiao
+    real de REGIOES_BREAKDOWN_CATEGORIES - usado pela aba "Regioes" (ver
+    REGIOES_TAB_KEY), que quebra os indicadores por regiao em vez de
+    Segmento/Fabricante/Marca/etc. Reusa `_cod_own_values` (mesma linha
+    que da o total real de um recorte top N) fixando cod="1" pra cada
+    regiao."""
+    return {
+        regiao: _cod_own_values(indicator, "1", {"regiao": regiao})
+        for regiao in REGIOES_BREAKDOWN_CATEGORIES
+    }
+
+
 def _self_cod(regiao_view, segmento_f, classificacao, fabricante=None, marca=None, rotulo=None):
     """Cod. da linha 'auto-total' de uma entidade (ex.: a propria linha
     Marca=Eudora), usado como `parent_cod` pra buscar os filhos dela."""
@@ -674,6 +700,13 @@ def build_selection(
     rankear por si mesmos. `fabricante_outros`: so vale pra Fabricante -
     inclui (True) ou descarta (False) o bloco sintetico "Demais
     Fabricantes" com o resto do ranking (ver `discover_top_categories`)."""
+    if regiao_view == REGIOES_TAB_KEY:
+        # aba "Regioes" (ver REGIOES_TAB_KEY): ignora `breakdown` e todos
+        # os filtros (a UI ja os desabilita) - a quebra e sempre a
+        # propria regiao, sobre o mercado inteiro
+        values = _regiao_root_values(indicator_id)
+        return REGIOES_BREAKDOWN_CATEGORIES, "regiao", {}, values, "Regiões", None
+
     if breakdown in EMBALAGEM_BREAKDOWNS:
         # Segmento/Fabricante/Marca/Submarca/Variante nao existem pra
         # essas duas arvores (ver EMBALAGEM_BREAKDOWNS) - ignora os
@@ -1052,7 +1085,14 @@ app.layout = html.Div(
                 html.H2("Worldpanel Dashboard", style={"margin": 0}),
             ],
         ),
-        dcc.Tabs(id="regiao-tabs", value=REGIAO_VIEWS[0], children=[dcc.Tab(label=r, value=r) for r in REGIAO_VIEWS]),
+        dcc.Tabs(
+            id="regiao-tabs",
+            value=REGIAO_VIEWS[0],
+            children=(
+                [dcc.Tab(label=r, value=r) for r in REGIAO_VIEWS]
+                + [dcc.Tab(label=REGIOES_TAB_KEY, value=REGIOES_TAB_KEY)]
+            ),
+        ),
         html.Div(
             style={"margin": "16px 0 12px", "maxWidth": "260px"},
             children=[
@@ -1238,6 +1278,7 @@ def update_subvariante_options(marca_f):
 
 
 @app.callback(
+    Output("dimension-dropdown", "disabled"),
     Output("segmento-filter", "disabled"),
     Output("segmento-filter", "options"),
     Output("segmento-filter", "value"),
@@ -1250,11 +1291,12 @@ def update_subvariante_options(marca_f):
     Output("body-splash-filter", "disabled"),
     Output("body-splash-filter", "value"),
     Input("dimension-dropdown", "value"),
+    Input("regiao-tabs", "value"),
     State("segmento-filter", "value"),
     State("fabricante-filter", "value"),
     State("body-splash-filter", "value"),
 )
-def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
+def update_filters_disabled(breakdown, regiao_view, segmento_f, fabricante_f, body_splash_f):
     # Segmento e um eixo independente da cadeia Fabricante>Marca>Submarca>
     # Variante: so fica desabilitado quando ele proprio e a quebra. Dentro
     # da cadeia, um filtro fica disponivel se for mais raso que a quebra
@@ -1264,11 +1306,15 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
     # mais fundos ficam desabilitados (nao faz sentido fixar Submarca
     # enquanto quebra por Marca, por exemplo). Embalagem (Tipo/Conteudo)
     # so combina com Regiao (ver EMBALAGEM_BREAKDOWNS): desabilita a
-    # cadeia inteira e Segmento juntos, sem excecao.
+    # cadeia inteira e Segmento juntos, sem excecao. Aba "Regioes" (ver
+    # REGIOES_TAB_KEY) nao combina com "Quebra por" nem com filtro
+    # nenhum: desabilita tudo, dropdown incluso (so essa aba mexe nele -
+    # as demais quebras nunca desabilitam "Quebra por" em si).
+    is_regioes = regiao_view == REGIOES_TAB_KEY
     is_embalagem = breakdown in EMBALAGEM_BREAKDOWNS
 
     def enabled(name):
-        if is_embalagem:
+        if is_regioes or is_embalagem:
             return False
         if name == "segmento":
             return breakdown != "segmento"
@@ -1287,7 +1333,10 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
     # opcoes e forca um segmento real. Body Splash tem a mesma restricao
     # (is_body_splash so existe em linhas de Submarca/Variante/Sub
     # Variante, ausentes em Segmento="Total" - ver SEGMENT_REQUIRED_BREAKDOWNS).
-    if breakdown in SEGMENT_REQUIRED_BREAKDOWNS:
+    if is_regioes:
+        segmento_options = SEGMENTO_FILTER_OPTIONS
+        segmento_value = "Total"
+    elif breakdown in SEGMENT_REQUIRED_BREAKDOWNS:
         segmento_options = SEGMENTOS
         segmento_value = segmento_f if segmento_f != "Total" else SEGMENTOS[0]
     elif is_embalagem:
@@ -1297,25 +1346,26 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
         segmento_options = SEGMENTO_FILTER_OPTIONS
         segmento_value = segmento_f
 
-    # forca Fabricante de volta pra "Total" ao entrar em Embalagem - o
-    # proprio valor "congelado" (filtro desabilitado) seria enganoso no
-    # breadcrumb/insight, sugerindo um recorte que a quebra ignora por
+    # forca Fabricante de volta pra "Total" ao entrar em Embalagem/Regioes
+    # - o proprio valor "congelado" (filtro desabilitado) seria enganoso
+    # no breadcrumb/insight, sugerindo um recorte que a quebra ignora por
     # completo. O reset cascateia sozinho pra Marca/Submarca/Variante/Sub
     # Variante via update_marca_options/update_submarca_options/
     # update_variante_options/update_subvariante_options (ja escutam
     # mudanca de Fabricante/Marca), sem precisar de mais Outputs aqui
     # (evitaria erro de "duplicate callback output").
-    fabricante_value = "Total" if is_embalagem else fabricante_f
+    fabricante_value = "Total" if (is_regioes or is_embalagem) else fabricante_f
 
     # IsBodySplash (ver BODY_SPLASH_OPTIONS/BODY_SPLASH_BREAKDOWNS): so
     # existe classificacao "Sim" em linhas de Sub Marca/Variante/Sub
     # Variante - fora dessas quebras o filtro fica travado em "Total"
     # (mesmo racional do reset de Fabricante em Embalagem acima, sem
     # cascata adicional aqui: o dropdown nao alimenta outro filtro)
-    body_splash_enabled = breakdown in BODY_SPLASH_BREAKDOWNS
+    body_splash_enabled = (not is_regioes) and breakdown in BODY_SPLASH_BREAKDOWNS
     body_splash_value = body_splash_f if body_splash_enabled else "Total"
 
     return (
+        is_regioes,
         not enabled("segmento"),
         [{"label": o, "value": o} for o in segmento_options],
         segmento_value,
@@ -1336,17 +1386,19 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
     Output("top-n-selector", "value"),
     Output("fabricante-outros-checkbox", "style"),
     Input("dimension-dropdown", "value"),
+    Input("regiao-tabs", "value"),
     State("top-n-selector", "value"),
 )
-def update_top_n_visibility(breakdown, current_top_n):
+def update_top_n_visibility(breakdown, regiao_view, current_top_n):
     """Fabricante usa opcoes de ranking proprias (FABRICANTE_TOP_N_OPTIONS)
     e mostra o checkbox "Demais Fabricantes"; Marca/Submarca/Variante/Sub
     Variante usam TOP_N_OPTIONS, sem o checkbox. Preserva o valor atual do
     seletor quando ele continua valido no novo conjunto de opcoes (ex.:
     10 existe nos dois) - so cai pro default do grupo quando nao (ex.: 20
-    ao trocar pra Fabricante)."""
+    ao trocar pra Fabricante). Aba "Regioes" (ver REGIOES_TAB_KEY) nunca
+    mostra o seletor - nao ha ranking, sao sempre as 4 regioes reais."""
     container_style = {"margin": "0 0 16px"}
-    if breakdown not in RANKED_BREAKDOWNS:
+    if breakdown not in RANKED_BREAKDOWNS or regiao_view == REGIOES_TAB_KEY:
         container_style["display"] = "none"
 
     if breakdown == "fabricante":
