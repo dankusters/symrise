@@ -213,6 +213,20 @@ TOP_N_DEFAULT = TOP_N_OPTIONS[0]
 BODY_SPLASH_BREAKDOWN_KEY = "bodysplash"
 SEGMENT_REQUIRED_BREAKDOWNS = TOP_N_BREAKDOWNS + (BODY_SPLASH_BREAKDOWN_KEY,)
 
+# Fabricante tambem ganha um seletor de ranking, com opcoes proprias (a
+# arvore de fabricantes e bem mais rasa que Marca/Submarca/Variante) e um
+# checkbox a parte pra incluir ou nao o bloco sintetico "Demais
+# Fabricantes" (ver _rank_top_n/other_label em build_selection). Com o
+# checkbox desmarcado, a soma das categorias exibidas passa a ser so o
+# top N filtrado (nao fecha mais o mercado real) - mesmo tratamento que
+# Marca/Submarca/Variante ja tem (true_totals cobre a diferenca pra %
+# de participacao/insights, ver `true_totals` em `build_selection`)
+FABRICANTE_TOP_N_OPTIONS = [5, 6, 10]
+FABRICANTE_TOP_N_DEFAULT = _TOP_N
+
+# quebras cujo seletor de ranking (top-n-container) aparece na UI
+RANKED_BREAKDOWNS = TOP_N_BREAKDOWNS + ("fabricante",)
+
 app = Dash(__name__)
 app.title = "Worldpanel Dashboard"
 
@@ -352,15 +366,18 @@ def _apply_ranking(values_all, top_n, other_label="Outras", add_other=True, cate
 
 def discover_top_categories(
     indicator, dim_col, base_filters, parent_cod, other_label="Outras", top_n=_TOP_N,
-    categories_override=None, weight_indicator=None,
+    categories_override=None, weight_indicator=None, add_other=True,
 ):
-    """Top N filhos diretos de `parent_cod` (ultimo ano) + um grupo
-    sintetico com o restante, pra barra sempre fechar o total real."""
+    """Top N filhos diretos de `parent_cod` (ultimo ano) + (se `add_other`)
+    um grupo sintetico com o restante, pra barra fechar o total real. Com
+    `add_other=False` o resto do ranking e descartado (ver `_rank_top_n`)."""
     if not parent_cod:
         return [], {}
     values_all = _children_values(indicator, dim_col, base_filters, parent_cod)
     weight_all = _children_values(weight_indicator, dim_col, base_filters, parent_cod) if weight_indicator else None
-    return _apply_ranking(values_all, top_n, other_label, categories_override=categories_override, weight_all=weight_all)
+    return _apply_ranking(
+        values_all, top_n, other_label, add_other=add_other, categories_override=categories_override, weight_all=weight_all,
+    )
 
 
 def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes, exclude_classificacoes, year_cols, result, add, body_splash_f="Total"):
@@ -643,17 +660,20 @@ _EXCLUDE_FROM_RANKING = frozenset({"Outros Fabricante"})
 
 def build_selection(
     breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, indicator_id,
-    top_n=_TOP_N, categories_override=None, weight_indicator=None, body_splash_f="Total",
+    top_n=_TOP_N, categories_override=None, weight_indicator=None, body_splash_f="Total", fabricante_outros=True,
 ):
     """Retorna (categories, dimension, filters, values_override, title,
     true_totals) para a combinacao atual de quebra/filtros/regiao.
-    `true_totals` e None exceto em Marca/Submarca/Variante, onde e o
-    total real (mercado/marca inteiro) usado pra calcular participacao
-    (MS) - o grafico so mostra um top N ali, entao a soma das categorias
-    exibidas nao e mais o total de verdade. `categories_override`/`weight_indicator`:
+    `true_totals` e None exceto em Marca/Submarca/Variante (sempre) e
+    Fabricante (quando `fabricante_outros=False`), onde e o total real
+    (mercado/marca inteiro) usado pra calcular participacao (MS) - o
+    grafico so mostra um top N ali, entao a soma das categorias exibidas
+    nao e mais o total de verdade. `categories_override`/`weight_indicator`:
     ver `_apply_ranking` - usado por indicadores nao aditivos (ex.: Preco
     Medio) que reaproveitam o ranking de outro indicador em vez de
-    rankear por si mesmos."""
+    rankear por si mesmos. `fabricante_outros`: so vale pra Fabricante -
+    inclui (True) ou descarta (False) o bloco sintetico "Demais
+    Fabricantes" com o resto do ranking (ver `discover_top_categories`)."""
     if breakdown in EMBALAGEM_BREAKDOWNS:
         # Segmento/Fabricante/Marca/Submarca/Variante nao existem pra
         # essas duas arvores (ver EMBALAGEM_BREAKDOWNS) - ignora os
@@ -682,10 +702,11 @@ def build_selection(
         base_filters = {"regiao": regiao_view, "segmento": segmento_f}
         parent_cod = _fabricante_root_cod(regiao_view, segmento_f)
         categories, values = discover_top_categories(
-            indicator_id, "fabricante", base_filters, parent_cod,
-            categories_override=categories_override, weight_indicator=weight_indicator,
+            indicator_id, "fabricante", base_filters, parent_cod, other_label="Demais Fabricantes", top_n=top_n,
+            categories_override=categories_override, weight_indicator=weight_indicator, add_other=fabricante_outros,
         )
-        return categories, "fabricante", base_filters, values, f"{crumb} > Fabricantes (top {_TOP_N})", None
+        true_totals = None if fabricante_outros else _cod_own_values(indicator_id, parent_cod, base_filters)
+        return categories, "fabricante", base_filters, values, f"{crumb} > Fabricantes (top {top_n})", true_totals
 
     # Marca/Submarca/Variante: nao exigem fabricante/marca/submarca fixo -
     # com o pai em "Total", descobre a partir da raiz (todos os
@@ -1058,13 +1079,31 @@ app.layout = html.Div(
             id="top-n-container",
             style={"display": "none", "margin": "0 0 16px"},
             children=[
-                html.Label("Ranking (top N por indicador, base 2025)"),
-                dcc.RadioItems(
-                    id="top-n-selector",
-                    options=[{"label": f"Top {n}", "value": n} for n in TOP_N_OPTIONS],
-                    value=TOP_N_DEFAULT,
-                    inline=True,
-                    inputStyle={"marginRight": "4px", "marginLeft": "12px"},
+                html.Div(
+                    style={"display": "flex", "alignItems": "center", "gap": "28px", "flexWrap": "wrap"},
+                    children=[
+                        html.Div([
+                            html.Label("Ranking (top N por indicador, base 2025)"),
+                            dcc.RadioItems(
+                                id="top-n-selector",
+                                options=[{"label": f"Top {n}", "value": n} for n in TOP_N_OPTIONS],
+                                value=TOP_N_DEFAULT,
+                                inline=True,
+                                inputStyle={"marginRight": "4px", "marginLeft": "12px"},
+                            ),
+                        ]),
+                        # so aparece pra quebra Fabricante (ver
+                        # update_top_n_visibility) - controla se o bloco
+                        # sintetico "Demais Fabricantes" (resto do top N)
+                        # entra ou nao na pilha (ver build_selection)
+                        dcc.Checklist(
+                            id="fabricante-outros-checkbox",
+                            options=[{"label": 'Incluir bloco "Demais Fabricantes"', "value": "incluir"}],
+                            value=["incluir"],
+                            style={"display": "none"},
+                            inputStyle={"marginRight": "6px"},
+                        ),
+                    ],
                 ),
             ],
         ),
@@ -1293,13 +1332,37 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
 
 @app.callback(
     Output("top-n-container", "style"),
+    Output("top-n-selector", "options"),
+    Output("top-n-selector", "value"),
+    Output("fabricante-outros-checkbox", "style"),
     Input("dimension-dropdown", "value"),
+    State("top-n-selector", "value"),
 )
-def update_top_n_visibility(breakdown):
-    style = {"margin": "0 0 16px"}
-    if breakdown not in TOP_N_BREAKDOWNS:
-        style["display"] = "none"
-    return style
+def update_top_n_visibility(breakdown, current_top_n):
+    """Fabricante usa opcoes de ranking proprias (FABRICANTE_TOP_N_OPTIONS)
+    e mostra o checkbox "Demais Fabricantes"; Marca/Submarca/Variante/Sub
+    Variante usam TOP_N_OPTIONS, sem o checkbox. Preserva o valor atual do
+    seletor quando ele continua valido no novo conjunto de opcoes (ex.:
+    10 existe nos dois) - so cai pro default do grupo quando nao (ex.: 20
+    ao trocar pra Fabricante)."""
+    container_style = {"margin": "0 0 16px"}
+    if breakdown not in RANKED_BREAKDOWNS:
+        container_style["display"] = "none"
+
+    if breakdown == "fabricante":
+        options, default = FABRICANTE_TOP_N_OPTIONS, FABRICANTE_TOP_N_DEFAULT
+        checkbox_style = {"display": "flex", "alignItems": "center"}
+    else:
+        options, default = TOP_N_OPTIONS, TOP_N_DEFAULT
+        checkbox_style = {"display": "none"}
+
+    value = current_top_n if current_top_n in options else default
+    return (
+        container_style,
+        [{"label": f"Top {n}", "value": n} for n in options],
+        value,
+        checkbox_style,
+    )
 
 
 def _chart_height(breakdown, categories):
@@ -1307,7 +1370,7 @@ def _chart_height(breakdown, categories):
     unica coluna - a altura padrao (640px) nao da espaco suficiente pros
     rotulos de cada uma sem sobrepor perto da base da pilha. Cresce com o
     numero de categorias realmente exibidas, so pra essas 3 quebras."""
-    if breakdown not in TOP_N_BREAKDOWNS and breakdown != "embalagem_conteudo":
+    if breakdown not in RANKED_BREAKDOWNS and breakdown != "embalagem_conteudo":
         return 640
     n = len(categories)
     return max(640, min(1500, 640 + max(0, n - 8) * 35))
@@ -1344,7 +1407,7 @@ def _simple_average(values, categories, years=YEARS_DEFAULT):
     return result
 
 
-def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
+def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total", fabricante_outros=True):
     """Monta os dados de cada bloco (grafico + tabela + insight) pra
     combinacao atual de quebra/filtros/regiao - {indicador: dict(...)}.
     Usado tanto pelo callback que redesenha a tela (`update_charts`)
@@ -1353,7 +1416,7 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
     exibidos na tela."""
     if not breakdown:
         breakdown = "segmento"
-    if breakdown not in TOP_N_BREAKDOWNS:
+    if breakdown not in RANKED_BREAKDOWNS:
         top_n = _TOP_N
 
     blocks: dict[str, dict] = {}
@@ -1369,7 +1432,7 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
         categories, dim_col, filters, values_override, title, true_totals = build_selection(
             breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, key, top_n,
             categories_override=resolved_categories.get(rank_with) if rank_with else None,
-            weight_indicator=cfg.get("weight_indicator"), body_splash_f=body_splash_f,
+            weight_indicator=cfg.get("weight_indicator"), body_splash_f=body_splash_f, fabricante_outros=fabricante_outros,
         )
         # resolve os valores uma unica vez (grafico, tabela e insight usam
         # exatamente os mesmos numeros)
@@ -1458,10 +1521,12 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
     Input("subvariante-filter", "value"),
     Input("top-n-selector", "value"),
     Input("body-splash-filter", "value"),
+    Input("fabricante-outros-checkbox", "value"),
 )
-def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
+def update_charts(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value):
     blocks = _build_blocks(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+        fabricante_outros="incluir" in (fabricante_outros_value or []),
     )
 
     figs, tables, insights = [], [], []
@@ -1494,11 +1559,13 @@ def _make_export_callback(key):
         State("subvariante-filter", "value"),
         State("top-n-selector", "value"),
         State("body-splash-filter", "value"),
+        State("fabricante-outros-checkbox", "value"),
         prevent_initial_call=True,
     )
-    def export(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
+    def export(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value):
         blocks = _build_blocks(
             breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+            fabricante_outros="incluir" in (fabricante_outros_value or []),
         )
         b = blocks[key]
         insight = generate_insight(
@@ -1520,7 +1587,7 @@ for _key in INDICATOR_BLOCKS:
     _make_export_callback(_key)
 
 
-def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
+def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total", fabricante_outros=True):
     """Um waterfall por categoria (nao um unico grafico com todas juntas,
     como os outros 4 blocos): decompoe a variacao ano a ano do Valor com
     Presentes de cada categoria em efeito Unidades e efeito Preco Medio.
@@ -1531,12 +1598,12 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     quanto pelo botao de exportar (`export_price_unit`)."""
     if not breakdown:
         breakdown = "segmento"
-    if breakdown not in TOP_N_BREAKDOWNS:
+    if breakdown not in RANKED_BREAKDOWNS:
         top_n = _TOP_N
 
-    categories, dim_col, filters, valor_override, title, _ = build_selection(
+    categories, dim_col, filters, valor_override, title, true_totals = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
-        "valor_com_presentes", top_n, body_splash_f=body_splash_f,
+        "valor_com_presentes", top_n, body_splash_f=body_splash_f, fabricante_outros=fabricante_outros,
     )
     if not categories:
         return []
@@ -1551,7 +1618,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
 
     _, _, _, unidades_override, _, _ = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
-        "unidades", top_n, categories_override=categories, body_splash_f=body_splash_f,
+        "unidades", top_n, categories_override=categories, body_splash_f=body_splash_f, fabricante_outros=fabricante_outros,
     )
     if unidades_override is not None:
         unidades_values = unidades_override
@@ -1571,11 +1638,12 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
 
     result = []
     # waterfall totalizador (soma de todas as categorias exibidas) antes
-    # dos especificos - so faz sentido em Segmento/Fabricante, onde as
-    # categorias somam o total de verdade (Segmento e exaustivo; Marca/
-    # Submarca/Variante sao so um recorte top N - ver EMBALAGEM_BREAKDOWNS
-    # tambem nao combina com esta aba)
-    if breakdown in ("segmento", "fabricante"):
+    # dos especificos - so faz sentido quando as categorias exibidas
+    # somam o total de verdade: Segmento (sempre exaustivo) e Fabricante
+    # com o checkbox "Demais Fabricantes" marcado (`true_totals is None`,
+    # ver `build_selection`); Marca/Submarca/Variante sao sempre so um
+    # recorte top N - EMBALAGEM_BREAKDOWNS tambem nao combina com esta aba
+    if breakdown == "segmento" or (breakdown == "fabricante" and true_totals is None):
         total_unidades = {yr: sum(unidades_values[cat][yr] for cat in categories) for yr in YEARS_DEFAULT}
         total_valor = {yr: sum(valor_values[cat][yr] for cat in categories) for yr in YEARS_DEFAULT}
         fig = price_unit_waterfall_chart(
@@ -1595,7 +1663,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     return result
 
 
-def _build_additions_bridge(indicator, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
+def _build_additions_bridge(indicator, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total", fabricante_outros=True):
     """(names, deltas, totals, title) pra uma aba "Adicoes de X" (ver
     ADDITIONS_TABS - `indicator` e "unidades" ou "valor_com_presentes")
     {ADDITIONS_YEAR0}->{ADDITIONS_YEAR1}": `totals` = {ano: total do
@@ -1617,14 +1685,14 @@ def _build_additions_bridge(indicator, breakdown, regiao_view, segmento_f, fabri
     dois, entao sempre batem."""
     if not breakdown:
         breakdown = "segmento"
-    if breakdown not in TOP_N_BREAKDOWNS:
+    if breakdown not in RANKED_BREAKDOWNS:
         top_n = _TOP_N
 
     yr0, yr1 = ADDITIONS_YEAR0, ADDITIONS_YEAR1
 
     categories, dim_col, filters, values_override, title, true_totals = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
-        indicator, top_n, body_splash_f=body_splash_f,
+        indicator, top_n, body_splash_f=body_splash_f, fabricante_outros=fabricante_outros,
     )
     if not categories:
         return [], {}, {}, title
@@ -1679,10 +1747,12 @@ def _bridge_transition_order(names, deltas):
     Input("subvariante-filter", "value"),
     Input("top-n-selector", "value"),
     Input("body-splash-filter", "value"),
+    Input("fabricante-outros-checkbox", "value"),
 )
-def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
+def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value):
     rows = _build_price_unit_rows(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+        fabricante_outros="incluir" in (fabricante_outros_value or []),
     )
     if not rows:
         return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
@@ -1715,22 +1785,25 @@ def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, 
     State("subvariante-filter", "value"),
     State("top-n-selector", "value"),
     State("body-splash-filter", "value"),
+    State("fabricante-outros-checkbox", "value"),
     prevent_initial_call=True,
 )
-def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
+def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value):
     rows = _build_price_unit_rows(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+        fabricante_outros="incluir" in (fabricante_outros_value or []),
     )
     pptx_bytes = build_price_unit_pptx([(row["fig"], row["insight"]) for row in rows])
     return dcc.send_bytes(pptx_bytes, "Price_Unit.pptx")
 
 
-def _additions_tab_result(cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
+def _additions_tab_result(cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value):
     """Logica compartilhada de todas as abas "Adicoes de X" (ver
     ADDITIONS_TABS) - so o `cfg` (indicador/rotulos daquela aba) muda
     entre elas, ver _register_additions_callback."""
     names, deltas, totals, title = _build_additions_bridge(
         cfg["indicator"], breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+        fabricante_outros="incluir" in (fabricante_outros_value or []),
     )
     indicator_cfg = INDICATORS[cfg["indicator"]]
     order = _bridge_transition_order(names, deltas) if names else []
@@ -1772,10 +1845,11 @@ def _register_additions_callback(cfg):
         Input("subvariante-filter", "value"),
         Input("top-n-selector", "value"),
         Input("body-splash-filter", "value"),
+        Input("fabricante-outros-checkbox", "value"),
     )
-    def update_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, cfg=cfg):
+    def update_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value, cfg=cfg):
         return _additions_tab_result(
-            cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+            cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value,
         )
 
 

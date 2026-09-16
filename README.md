@@ -108,8 +108,11 @@ Abre em `http://127.0.0.1:8050/`.
   (Sim/Não/Total). Marca/Submarca/Variante/Sub Variante com muitas
   categorias usam um seletor de top N (10/20/30), sem grupo sintético
   "Outros" (o top N é só um recorte, não fecha 100% — daí o
-  `coverage_pct` no gráfico). Fabricante usa top 6 + "Outros" (fecha o
-  total real).
+  `coverage_pct` no gráfico). Fabricante tem seletor próprio (Top
+  5/6/10, padrão 6) e um checkbox "Incluir bloco 'Demais Fabricantes'":
+  marcado (padrão), soma um bloco sintético com o resto do ranking e
+  fecha o total real; desmarcado, mostra só o top N filtrado e cai no
+  mesmo `coverage_pct` usado por Marca/Submarca/Variante.
   - **Body Splash** (quebra) — 2 categorias fixas, "Body Splash" e "Não
     Body Splash", que sempre somam 100% do indicador no filtro atual
     (sem ranking/top N, já que só há 2 categorias) — compara o
