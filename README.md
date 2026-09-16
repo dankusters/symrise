@@ -3,11 +3,13 @@
 Dashboard interativo (Plotly + Dash) da evolução anual (Y2022–Y2025) dos
 indicadores de mercado de perfumaria no Brasil, a partir do relatório
 Worldpanel (Kantar). Filtros combináveis de Região, Segmento,
-Fabricante, Marca, Submarca, Variante e Sub Variante, mais duas árvores
-à parte (Embalagem: Tipo e Conteúdo) que só combinam com Região. Ver
-`ESCOPO.md` para o briefing original — bastante coisa no app hoje vai
-além dele (Sub Variante, Embalagem, Price/Unit, Adições de Unidades),
-descoberta/pedida ao longo do desenvolvimento.
+Fabricante, Marca, Submarca, Variante, Sub Variante e IsBodySplash, mais
+duas árvores à parte (Embalagem: Tipo e Conteúdo) que só combinam com
+Região, e uma quebra à parte (Body Splash) que compara o crescimento de
+Body Splash vs. o restante do mercado. Ver `ESCOPO.md` para o briefing
+original — bastante coisa no app hoje vai além dele (Sub Variante,
+Embalagem, Price/Unit, Adições de Unidades/Valor com Presentes, filtro
+e quebra Body Splash), descoberta/pedida ao longo do desenvolvimento.
 
 ## Rodar localmente
 
@@ -42,7 +44,13 @@ Abre em `http://127.0.0.1:8050/`.
   por amostragem de pixel da imagem de referência do escopo; as demais
   vêm de `fonte/hexa_colors.xlsx` (aba "2025"), a paleta oficial — é lida
   a cada carregamento, então editar o hexa na planilha reflete direto no
-  dashboard, sem mexer em código.
+  dashboard, sem mexer em código. `contrast_text_color(hex)` escolhe
+  texto preto/branco pelo brilho percebido (rótulo de valor dentro das
+  barras empilhadas); `readable_foreground(hex)` escurece uma cor clara
+  demais (preservando matiz/saturação) quando ela vira texto/linha sobre
+  fundo branco (rótulo lateral do alluvial, linha do
+  `line_evolution_chart`) — as duas cobrem tanto a paleta oficial quanto
+  o fallback hash-based, sem precisar de coluna extra na planilha.
 
 - **`charts.py`** — templates de gráfico, todos com borda preta fina
   nas barras (`_BAR_BORDER_COLOR`/`_BAR_BORDER_WIDTH`):
@@ -61,11 +69,17 @@ Abre em `http://127.0.0.1:8050/`.
     sem rótulo de valor por ponto (a tabela ao lado já traz os
     números). Eixo Y com autorange normal (aceita negativos) e linha de
     referência em zero. Para indicadores de taxa/média: Penetração,
-    Vol. por Comprador, Frequência, Preço Médio (Litros/Unidades), e a
-    aba "Adições de Unidades".
+    Vol. por Comprador, Frequência, Preço Médio (Litros/Unidades).
   - `price_unit_waterfall_chart`/`price_unit_effects` — waterfall da
     decomposição Unidades × Preço Médio da aba "Price/Unit" (ver
     `app.py` abaixo).
+  - `unit_additions_bridge_chart` — waterfall/"bridge" das abas
+    "Adições de Unidades"/"Adições de Valor com Presente": dois pilares
+    cinzas (total do indicador no penúltimo e no último ano) com um
+    bloco por categoria entre eles (verde/vermelho conforme empurrou o
+    total pra cima/baixo nessa única transição). Genérico por indicador
+    — `app.py` reusa o mesmo template pras duas abas, só trocando os
+    rótulos/unidade (ver `ADDITIONS_TABS` abaixo).
   - `compute_values(...)` — helper compartilhado que os templates (e
     `insights.py`) usam para extrair `{categoria: {ano: valor}}` de um
     DataFrame já filtrado.
@@ -78,28 +92,61 @@ Abre em `http://127.0.0.1:8050/`.
   divergindo. Roda sobre os mesmos dados do gráfico, então num filtro
   novo o texto muda junto. `generate_price_unit_insight(...)` faz o
   mesmo pra aba Price/Unit (atribui o crescimento/queda do Valor a cada
-  efeito, Unidades ou Preço).
+  efeito, Unidades ou Preço). `generate_unit_additions_insight(...)` faz
+  o mesmo pras abas "Adições de X" (quem mais empurrou o total pra cima/
+  baixo na transição 2024→2025) — `indicator_label`/`unit_label`
+  parametrizam o texto por indicador (ex.: "O total de Unidades cresceu
+  X milhões" vs. "O total de Valor com Presentes cresceu R$ X milhões" —
+  unidades monetárias ficam com o "R$" antes do número, não depois).
 
 - **`app.py`** — app Dash: abas de Região no topo, dropdown "Quebra
   por" (Segmento / Fabricante / Marca / Submarca / Variante / Sub
-  Variante / Embalagem Tipo / Embalagem Conteúdo) e filtros em cascata
-  (Segmento independente; Fabricante → Marca → Submarca/Variante/Sub
-  Variante) fixos pras dimensões que não estão sendo usadas como
-  quebra. Marca/Submarca/Variante/Sub Variante com muitas categorias
-  usam um seletor de top N (10/20/30), sem grupo sintético "Outros" (o
-  top N é só um recorte, não fecha 100% — daí o `coverage_pct` no
-  gráfico). Fabricante usa top 6 + "Outros" (fecha o total real).
-  Abas de indicador: Volume / Unidades / Valor com Presentes / Preço
-  Médio (gráfico + tabela de variação + legenda + Highlights, um bloco
-  por indicador) mais duas abas à parte:
+  Variante / Body Splash / Embalagem Tipo / Embalagem Conteúdo) e
+  filtros em cascata (Segmento independente; Fabricante → Marca →
+  Submarca/Variante/Sub Variante) fixos pras dimensões que não estão
+  sendo usadas como quebra, mais um filtro à parte, IsBodySplash
+  (Sim/Não/Total). Marca/Submarca/Variante/Sub Variante com muitas
+  categorias usam um seletor de top N (10/20/30), sem grupo sintético
+  "Outros" (o top N é só um recorte, não fecha 100% — daí o
+  `coverage_pct` no gráfico). Fabricante usa top 6 + "Outros" (fecha o
+  total real).
+  - **Body Splash** (quebra) — 2 categorias fixas, "Body Splash" e "Não
+    Body Splash", que sempre somam 100% do indicador no filtro atual
+    (sem ranking/top N, já que só há 2 categorias) — compara o
+    crescimento da linha Body Splash contra o resto do mercado/marca.
+    Combina com toda a cadeia Região/Segmento/Fabricante/Marca/Submarca/
+    Variante/Sub Variante (qualquer filtro fixo restringe o escopo
+    antes do split); Segmento é forçado pra um valor real (não "Total"),
+    mesma restrição de Marca/Submarca/Variante/Sub Variante, já que a
+    classificação IsBodySplash só existe dentro de um segmento
+    específico na planilha. O filtro IsBodySplash avulso fica travado
+    (resetado pra "Total") enquanto essa quebra está ativa. Implementada
+    descendo a árvore de `Cód.` até as folhas de verdade (SKUs), sem
+    parar num nível-alvo como as demais quebras (ver
+    `_body_splash_values`/`_body_splash_leaves` em `app.py`).
+  - **IsBodySplash** (filtro) — só fica habilitado combinado com quebra
+    por Submarca/Variante/Sub Variante (`BODY_SPLASH_BREAKDOWNS`): é
+    nessas 3 quebras que a classificação Sim/Não (de
+    `fonte/body_splash.xlsx`, juntada por `Cód.`) é confiável — nenhum
+    Fabricante/Marca inteiro é 100% Body Splash, então filtrar por esses
+    níveis daria números vazios/errados.
+  Abas de indicador: Volume / Unidades / Valor com Presentes /
+  Compradores / Penetração / Vol. por Comprador / Frequência / Preço
+  Médio (Litros) (gráfico + tabela de variação + legenda + Highlights,
+  um bloco por indicador) mais três abas à parte:
   - **Price/Unit** — um waterfall por categoria decompondo a variação
     do Valor com Presentes em efeito Unidades × efeito Preço Médio;
     waterfall totalizador (soma de todas as categorias) no topo quando
     a quebra é Segmento ou Fabricante.
-  - **Adições de Unidades** — uma linha por categoria com a diferença
-    de Unidades ano a ano (2022 é a diferença sobre um zero artificial,
-    já que a planilha não tem 2021), ordenada pela maior adição em
-    2025; tabela ao lado com os mesmos números.
+  - **Adições de Unidades** / **Adições de Valor com Presente** — duas
+    abas idênticas (mesmo layout/lógica, só troca o indicador, ver
+    `ADDITIONS_TABS`): um waterfall/"bridge" com a decomposição por
+    categoria da diferença do indicador entre o penúltimo e o último ano
+    (hoje 2024→2025 — só essa transição, não o período inteiro), maior
+    adição primeiro na tabela ao lado; reusam o mesmo seletor de top N
+    da quebra ativa (Marca/Submarca/Variante/Sub Variante) em vez de ter
+    um próprio — a quebra Body Splash, sem ranking, tampouco precisa
+    dele.
 
 - **`export_pptx.py`** — exporta qualquer bloco (gráfico + tabela) ou a
   aba Price/Unit pra PowerPoint, com os MESMOS números da tela
@@ -113,19 +160,24 @@ Abre em `http://127.0.0.1:8050/`.
 ## Status atual
 
 **Feito:**
-- ETL validado (5.742 linhas, 55 colunas)
+- ETL validado (5.742 linhas, 56 colunas, incluindo `is_body_splash`)
 - Os 12 indicadores do escopo cobertos pelos templates de gráfico, mais
-  a decomposição Unidades×Preço (Price/Unit) e as adições de Unidades
-  ano a ano
+  a decomposição Unidades×Preço (Price/Unit) e as adições de Unidades/
+  Valor com Presentes na transição 2024→2025
 - Comentário automático (highlights) por categoria/waterfall
 - Filtros combináveis de Região/Segmento/Fabricante/Marca/Submarca/
-  Variante/Sub Variante, com quebra dinâmica; duas quebras à parte de
-  Embalagem (Tipo/Conteúdo), descobertas na planilha e não documentadas
-  no ESCOPO.md — só combinam com Região
+  Variante/Sub Variante/IsBodySplash, com quebra dinâmica; duas quebras
+  à parte de Embalagem (Tipo/Conteúdo), descobertas na planilha e não
+  documentadas no ESCOPO.md — só combinam com Região; mais uma quebra à
+  parte, Body Splash (Body Splash vs. Não Body Splash, 2 categorias que
+  fecham 100% do total, sem ranking)
 - Exportação PowerPoint (não PDF) com identidade visual Symrise, fiel
   aos números da tela
 - Paleta de cores oficial de Fabricante/Marca/Sub Marca/Variante/Sub
-  Variante/Embalagem/Segmento, lida direto de `fonte/hexa_colors.xlsx`
+  Variante/Embalagem/Segmento, lida direto de `fonte/hexa_colors.xlsx`;
+  contraste de texto (sobre barra ou como linha/rótulo) calculado
+  automaticamente pra qualquer cor da paleta, sem depender de uma
+  coluna extra cadastrada cor a cor
 
 **Em aberto:**
 - Share Unidades / Share Valor com Presentes só funcionam quebrados por

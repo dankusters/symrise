@@ -71,13 +71,19 @@ REGION_COLORS: dict[str, str] = {
 }
 
 # Rotulos sinteticos que a propria app.py cria (nao existem na planilha):
-# o bucket "resto do ranking" de um top-N (_rank_top_n) e o "Total"
-# generico. Cinza segue a mesma convencao da planilha oficial para
-# linhas "Outros"/agregadoras; "Total" reusa o tom de "T. Brasil" acima.
+# o bucket "resto do ranking" de um top-N (_rank_top_n), o "Total"
+# generico, e as 2 categorias fixas da quebra "Body Splash"
+# (app._body_splash_values). Cinza segue a mesma convencao da planilha
+# oficial para linhas "Outros"/agregadoras; "Total" reusa o tom de
+# "T. Brasil" acima; "Body Splash" usa um azul-agua (tema "splash de
+# agua"), "Não Body Splash" um cinza mais escuro que "Outras" pra nao
+# ser confundido com residual/sem-dados.
 _SYNTHETIC_COLORS: dict[str, str] = {
     "Outras": "#E0E0E0",
     "Demais outras": "#E0E0E0",
     "Total": "#4A4A4A",
+    "Body Splash": "#2AA9C9",
+    "Não Body Splash": "#8C8C8C",
 }
 
 

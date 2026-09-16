@@ -111,17 +111,40 @@ INDICATOR_BLOCKS = [
 PRICE_UNIT_TAB_KEY = "price_unit"
 PRICE_UNIT_TAB_LABEL = "Price/Unit"
 
-# aba "Adicoes de Unidades": bridge/waterfall de UMA UNICA transicao
-# (o penultimo -> ultimo ano de YEARS_DEFAULT, hoje 2024->2025 - nao o
+# abas "Adicoes de X": bridge/waterfall de UMA UNICA transicao (o
+# penultimo -> ultimo ano de YEARS_DEFAULT, hoje 2024->2025 - nao o
 # periodo inteiro, decidido apos o usuario achar a versao com as 4
 # transicoes de 2021 em diante extensa demais) decompondo a diferenca
-# de Unidades entre os dois anos por categoria (Fabricante/Marca/etc)
-# - ver _build_unit_additions_bridge. O rotulo da aba ja reforca o
-# periodo coberto.
-UNIT_ADDITIONS_TAB_KEY = "unit_additions"
-UNIT_ADDITIONS_YEAR0 = YEARS_DEFAULT[-2]
-UNIT_ADDITIONS_YEAR1 = YEARS_DEFAULT[-1]
-UNIT_ADDITIONS_TAB_LABEL = f"Adições de Unidades {UNIT_ADDITIONS_YEAR0[1:]}→{UNIT_ADDITIONS_YEAR1[1:]}"
+# do indicador entre os dois anos por categoria (Fabricante/Marca/etc)
+# - ver _build_additions_bridge. O rotulo da aba ja reforca o periodo
+# coberto. Cada entrada de ADDITIONS_TABS gera uma aba identica (mesmo
+# grafico/tabela/highlight, ver _additions_panel/_additions_tab_result),
+# so trocando o indicador - "unit_additions" (Unidades) e "value_additions"
+# (Valor com Presentes) nessa ordem, que e a ordem visual das abas.
+ADDITIONS_YEAR0 = YEARS_DEFAULT[-2]
+ADDITIONS_YEAR1 = YEARS_DEFAULT[-1]
+ADDITIONS_TABS = [
+    dict(
+        key="unit_additions",
+        indicator="unidades",
+        tab_label=f"Adições de Unidades {ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}",
+        chart_unit_label="milhões de unidades",
+        insight_label="Unidades",
+        graph_id="graph-unit-additions",
+        table_id="unit-additions-table",
+        insight_id="unit-additions-insight",
+    ),
+    dict(
+        key="value_additions",
+        indicator="valor_com_presentes",
+        tab_label=f"Adições de Valor com Presente {ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}",
+        chart_unit_label="R$ milhões",
+        insight_label="Valor com Presentes",
+        graph_id="graph-value-additions",
+        table_id="value-additions-table",
+        insight_id="value-additions-insight",
+    ),
+]
 INDICATORS = {
     "volume": dict(label="Volume", value_scale=1e-6, value_decimals=2, unit_label="milhões de litros", is_percent=False, additive=True, chart_type="stack"),
     "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=2, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
@@ -177,6 +200,18 @@ _TOP_N = 6
 TOP_N_BREAKDOWNS = ("marca", "submarca", "variante", "subvariante")
 TOP_N_OPTIONS = [10, 20, 30]
 TOP_N_DEFAULT = TOP_N_OPTIONS[0]
+
+# quebra "Body Splash" (ver BODY_SPLASH_BREAKDOWN_KEY/_body_splash_values):
+# 2 categorias fixas (Body Splash x Nao Body Splash) que somam 100% do
+# indicador no filtro atual - ranking nao faz sentido aqui (so 2
+# categorias, nunca um top N), por isso NAO entra em TOP_N_BREAKDOWNS.
+# Mas assim como as 4 quebras acima, so existe detalhamento por
+# is_body_splash dentro de um Segmento real (ver comentario logo abaixo,
+# sobre Submarca/Variante/Sub Variante nao existirem em Segmento="Total")
+# - por isso combina com TOP_N_BREAKDOWNS nesse forcing de Segmento em
+# update_filters_disabled.
+BODY_SPLASH_BREAKDOWN_KEY = "bodysplash"
+SEGMENT_REQUIRED_BREAKDOWNS = TOP_N_BREAKDOWNS + (BODY_SPLASH_BREAKDOWN_KEY,)
 
 app = Dash(__name__)
 app.title = "Worldpanel Dashboard"
@@ -401,6 +436,67 @@ def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classi
     return result
 
 
+_BODY_SPLASH_LABEL = "Body Splash"
+_NOT_BODY_SPLASH_LABEL = "Não Body Splash"
+
+
+def _body_splash_leaves(scoped_df, cod, year_cols, buckets, scale):
+    """Desce recursivamente ate as FOLHAS DE VERDADE da arvore de Cod.
+    sob `cod` (sem parar num nivel-alvo, ao contrario de
+    `_descend_scoped`/`_descend_to_level`) somando o indicador de cada
+    folha num dos 2 baldes fixos (`_BODY_SPLASH_LABEL`/
+    `_NOT_BODY_SPLASH_LABEL`), conforme sua coluna `is_body_splash`
+    ("Sim"/"Não" - ver `etl.load_body_splash`). Cobre 100% do escopo
+    (sem top N nem residual "Outras"), entao os 2 baldes sempre fecham o
+    total real do filtro atual - por isso a quebra "Body Splash" nao usa
+    `_apply_ranking`/TOP_N_BREAKDOWNS."""
+    rows = _cod_children(scoped_df, cod)
+    if rows.empty:
+        return False
+    for row in rows.itertuples():
+        found = _body_splash_leaves(scoped_df, row.cod, year_cols, buckets, scale)
+        if not found:
+            bucket = _BODY_SPLASH_LABEL if row.is_body_splash == "Sim" else _NOT_BODY_SPLASH_LABEL
+            for yr, col in zip(YEARS_DEFAULT, year_cols):
+                buckets[bucket][yr] += float(getattr(row, col)) * scale
+    return True
+
+
+def _body_splash_values(indicator, base_filters, start_cod):
+    """{"Body Splash"/"Não Body Splash": {ano: valor}} pra quebra
+    BODY_SPLASH_BREAKDOWN_KEY: soma o indicador de TODAS as folhas da
+    arvore de Cod. sob `start_cod` (o mesmo `start_cod` em cascata usado
+    pelas quebras Marca/Submarca/Variante/Sub Variante, ver
+    `build_selection` - Fabricante/Marca/Submarca/Variante fixos
+    restringem o escopo antes da descida), classificadas por
+    `is_body_splash`. Ao contrario de `_descend_to_level`, nao para num
+    nivel-alvo: desce ate a folha de verdade, entao cobre 100% do
+    volume/valor do escopo, comparavel com o Total exibido nas demais
+    quebras (Segmento, Fabricante etc).
+
+    Quando o proprio `start_cod` ja e uma folha (sem filhos - ex.:
+    Segmento "Unisex", que na planilha nao se abre em Fabricante/Marca),
+    `_body_splash_leaves` nao teria ninguem pra classificar (so filhos
+    viram balde, nunca o `start_cod` recebido); esse caso conta a
+    PROPRIA linha, senao o total do escopo sumiria (viraria 0 nos dois
+    baldes em vez do valor real)."""
+    buckets = {_BODY_SPLASH_LABEL: {yr: 0.0 for yr in YEARS_DEFAULT}, _NOT_BODY_SPLASH_LABEL: {yr: 0.0 for yr in YEARS_DEFAULT}}
+    if not start_cod:
+        return buckets
+    scoped_df = _scope(base_filters)
+    scale = INDICATORS[indicator]["value_scale"]
+    year_cols = [f"{indicator}_{yr}" for yr in YEARS_DEFAULT]
+    has_children = _body_splash_leaves(scoped_df, start_cod, year_cols, buckets, scale)
+    if not has_children:
+        row = scoped_df[scoped_df["cod"] == start_cod]
+        if not row.empty:
+            row = row.iloc[0]
+            bucket = _BODY_SPLASH_LABEL if row["is_body_splash"] == "Sim" else _NOT_BODY_SPLASH_LABEL
+            for yr in YEARS_DEFAULT:
+                buckets[bucket][yr] += float(row[f"{indicator}_{yr}"]) * scale
+    return buckets
+
+
 def _cod_own_values(indicator, cod, base_filters):
     """{ano: valor} da propria linha de `cod` (nao dos filhos) - usado
     como o total "de verdade" (mercado/marca inteiro) quando a quebra
@@ -596,6 +692,27 @@ def build_selection(
     # fabricantes) e desce ate o nivel pedido (ver _descend_to_level)
     base_filters = {"regiao": regiao_view, "segmento": segmento_f}
 
+    if breakdown == BODY_SPLASH_BREAKDOWN_KEY:
+        # mesma cascata de start_cod da quebra "subvariante" (a mais
+        # profunda): Fabricante/Marca/Submarca/Variante/Sub Variante,
+        # qualquer um deles fixo, restringe o escopo antes da descida -
+        # ver update_filters_disabled, que mantem a cadeia inteira
+        # habilitada como filtro pra essa quebra (igual a Segmento).
+        if subvariante_f and subvariante_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Sub Variante", marca=marca_f, rotulo=subvariante_f)
+        elif variante_f and variante_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Variante", marca=marca_f, rotulo=variante_f)
+        elif submarca_f and submarca_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Sub Marca", marca=marca_f, rotulo=submarca_f)
+        elif marca_f and marca_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Marca", fabricante=fabricante_f, marca=marca_f)
+        elif fabricante_f and fabricante_f != "Total":
+            start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
+        else:
+            start_cod = _fabricante_root_cod(regiao_view, segmento_f)
+        values = _body_splash_values(indicator_id, base_filters, start_cod)
+        return [_BODY_SPLASH_LABEL, _NOT_BODY_SPLASH_LABEL], "rotulo", {}, values, f"{crumb} > Body Splash", None
+
     if breakdown == "marca":
         if fabricante_f and fabricante_f != "Total":
             start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
@@ -790,17 +907,17 @@ def _variation_table(categories, values, additive, value_decimals, totals_overri
     )
 
 
-def _unit_additions_cell(value, value_decimals):
+def _additions_cell(value, value_decimals):
     color = _NOMINAL_COLOR if value == 0 else (_POSITIVE_COLOR if value >= 0 else _NEGATIVE_COLOR)
     text = f"{value:,.{value_decimals}f}" if value == 0 else f"{value:+,.{value_decimals}f}"
     return html.Td(text, style={**_TABLE_CELL_STYLE, "color": color, "fontVariantNumeric": "tabular-nums"})
 
 
-def _unit_additions_table(names, deltas, value_decimals):
+def _additions_table(names, deltas, value_decimals):
     """Tabela simples (sem % de variacao/participacao, ao contrario de
-    `_variation_table`) pra aba "Adicoes de Unidades": UMA coluna so,
-    "AnoAnterior→UltimoAno" (ex.: "2024→2025" - a mesma, unica
-    transicao do grafico, ver UNIT_ADDITIONS_YEAR0/YEAR1), mostrando
+    `_variation_table`) pra uma aba "Adicoes de X" (ver ADDITIONS_TABS):
+    UMA coluna so, "AnoAnterior→UltimoAno" (ex.: "2024→2025" - a mesma,
+    unica transicao do grafico, ver ADDITIONS_YEAR0/YEAR1), mostrando
     exatamente o numero plotado no grafico pra cada nome - "reflete o
     que se ve no grafico", nao uma tabela de variacao percentual."""
     if not names:
@@ -809,14 +926,14 @@ def _unit_additions_table(names, deltas, value_decimals):
     header = html.Tr(
         [
             html.Th("Categoria", style={**_TABLE_CELL_STYLE, "textAlign": "left"}),
-            html.Th(f"{UNIT_ADDITIONS_YEAR0[1:]}→{UNIT_ADDITIONS_YEAR1[1:]}", style=_TABLE_CELL_STYLE),
+            html.Th(f"{ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}", style=_TABLE_CELL_STYLE),
         ]
     )
     rows = [
         html.Tr(
             [
                 html.Td(name, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"}),
-                _unit_additions_cell(deltas[name], value_decimals),
+                _additions_cell(deltas[name], value_decimals),
             ]
         )
         for name in names
@@ -825,6 +942,43 @@ def _unit_additions_table(names, deltas, value_decimals):
         [html.Thead(header), html.Tbody(rows)],
         style={"borderCollapse": "collapse", "width": "100%", "fontSize": "15px"},
     )
+
+
+def _additions_panel(cfg):
+    """Layout de uma aba "Adicoes de X" (ver ADDITIONS_TABS): grafico
+    waterfall NAO responsivo (largura cresce com o numero de blocos -
+    ate 30 categorias x 4 transicoes, ver charts.unit_additions_bridge_chart)
+    - scroll horizontal em vez de espremer tudo num container de largura
+    fixa - com tabela e highlight embaixo do grafico (nao do lado, como
+    os outros blocos), ja que com ate 30+1 linhas (top N + "Outras") o
+    grafico ja precisa de toda a largura disponivel."""
+    return [
+        html.Div(
+            style={"overflowX": "auto", "marginBottom": "24px"},
+            children=[
+                dcc.Graph(
+                    id=cfg["graph_id"],
+                    config={"responsive": False, "displayModeBar": False},
+                ),
+            ],
+        ),
+        html.Div(
+            style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "flex-start"},
+            children=[
+                html.Div(id=cfg["table_id"], style={"flex": "3", "minWidth": "420px"}),
+                html.Div(
+                    [
+                        html.B("Highlights"),
+                        html.P(
+                            id=cfg["insight_id"],
+                            style={"margin": "4px 0 0", "fontSize": "15.5px", "lineHeight": "1.5", "color": "#333"},
+                        ),
+                    ],
+                    style={"flex": "1", "minWidth": "260px", "maxWidth": "360px"},
+                ),
+            ],
+        ),
+    ]
 
 
 def _chart_block(key):
@@ -891,6 +1045,7 @@ app.layout = html.Div(
                         {"label": "Submarca", "value": "submarca"},
                         {"label": "Variante", "value": "variante"},
                         {"label": "Sub Variante", "value": "subvariante"},
+                        {"label": "Body Splash", "value": BODY_SPLASH_BREAKDOWN_KEY},
                         {"label": "Embalagem (Tipo)", "value": "embalagem_tipo"},
                         {"label": "Embalagem (Conteúdo)", "value": "embalagem_conteudo"},
                     ],
@@ -931,7 +1086,7 @@ app.layout = html.Div(
             children=(
                 [dcc.Tab(label=INDICATORS[key]["label"], value=key) for key in INDICATOR_BLOCKS]
                 + [dcc.Tab(label=PRICE_UNIT_TAB_LABEL, value=PRICE_UNIT_TAB_KEY)]
-                + [dcc.Tab(label=UNIT_ADDITIONS_TAB_LABEL, value=UNIT_ADDITIONS_TAB_KEY)]
+                + [dcc.Tab(label=cfg["tab_label"], value=cfg["key"]) for cfg in ADDITIONS_TABS]
             ),
             style={"marginBottom": "16px"},
         ),
@@ -974,52 +1129,18 @@ app.layout = html.Div(
                 ]
                 + [
                     html.Div(
-                        id=f"indicator-panel-{UNIT_ADDITIONS_TAB_KEY}",
+                        id=f"indicator-panel-{cfg['key']}",
                         style={"display": "none"},
-                        children=[
-                            # grafico NAO responsivo (largura cresce com o
-                            # numero de blocos - ate 30 categorias x 4
-                            # transicoes, ver charts.unit_additions_bridge_chart)
-                            # - scroll horizontal em vez de espremer tudo
-                            # num container de largura fixa
-                            html.Div(
-                                style={"overflowX": "auto", "marginBottom": "24px"},
-                                children=[
-                                    dcc.Graph(
-                                        id="graph-unit-additions",
-                                        config={"responsive": False, "displayModeBar": False},
-                                    ),
-                                ],
-                            ),
-                            # tabela e highlight embaixo do grafico (nao do
-                            # lado, como os outros blocos) - com ate 30+1
-                            # linhas (top N + "Outras"), o grafico ja
-                            # precisa de toda a largura disponivel
-                            html.Div(
-                                style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "flex-start"},
-                                children=[
-                                    html.Div(id="unit-additions-table", style={"flex": "3", "minWidth": "420px"}),
-                                    html.Div(
-                                        [
-                                            html.B("Highlights"),
-                                            html.P(
-                                                id="unit-additions-insight",
-                                                style={"margin": "4px 0 0", "fontSize": "15.5px", "lineHeight": "1.5", "color": "#333"},
-                                            ),
-                                        ],
-                                        style={"flex": "1", "minWidth": "260px", "maxWidth": "360px"},
-                                    ),
-                                ],
-                            ),
-                        ],
+                        children=_additions_panel(cfg),
                     )
+                    for cfg in ADDITIONS_TABS
                 ]
             ),
         ),
     ],
 )
 
-_ALL_TAB_KEYS = INDICATOR_BLOCKS + [PRICE_UNIT_TAB_KEY, UNIT_ADDITIONS_TAB_KEY]
+_ALL_TAB_KEYS = INDICATOR_BLOCKS + [PRICE_UNIT_TAB_KEY] + [cfg["key"] for cfg in ADDITIONS_TABS]
 
 
 @app.callback(
@@ -1098,12 +1219,13 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
     # Segmento e um eixo independente da cadeia Fabricante>Marca>Submarca>
     # Variante: so fica desabilitado quando ele proprio e a quebra. Dentro
     # da cadeia, um filtro fica disponivel se for mais raso que a quebra
-    # ativa (ancestral dela) ou se a quebra for Segmento (a cadeia toda
-    # vira filtro); a propria quebra e os niveis mais fundos ficam
-    # desabilitados (nao faz sentido fixar Submarca enquanto quebra por
-    # Marca, por exemplo). Embalagem (Tipo/Conteudo) so combina com
-    # Regiao (ver EMBALAGEM_BREAKDOWNS): desabilita a cadeia inteira e
-    # Segmento juntos, sem excecao.
+    # ativa (ancestral dela) ou se a quebra for Segmento OU Body Splash (a
+    # cadeia toda vira filtro nos dois casos - Body Splash desce ate onde
+    # o filtro fixar, ver build_selection); a propria quebra e os niveis
+    # mais fundos ficam desabilitados (nao faz sentido fixar Submarca
+    # enquanto quebra por Marca, por exemplo). Embalagem (Tipo/Conteudo)
+    # so combina com Regiao (ver EMBALAGEM_BREAKDOWNS): desabilita a
+    # cadeia inteira e Segmento juntos, sem excecao.
     is_embalagem = breakdown in EMBALAGEM_BREAKDOWNS
 
     def enabled(name):
@@ -1111,7 +1233,7 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
             return False
         if name == "segmento":
             return breakdown != "segmento"
-        if breakdown == "segmento":
+        if breakdown in ("segmento", BODY_SPLASH_BREAKDOWN_KEY):
             return True
         if breakdown == name:
             return False
@@ -1123,8 +1245,10 @@ def update_filters_disabled(breakdown, segmento_f, fabricante_f, body_splash_f):
     # nenhuma linha em "Total"; Marca ate tem algumas, mas misturadas
     # com totais de fabricante reaproveitados como "marca" pela descida
     # generica - nao e uma quebra confiavel) - por isso tira "Total" das
-    # opcoes e forca um segmento real
-    if breakdown in TOP_N_BREAKDOWNS:
+    # opcoes e forca um segmento real. Body Splash tem a mesma restricao
+    # (is_body_splash so existe em linhas de Submarca/Variante/Sub
+    # Variante, ausentes em Segmento="Total" - ver SEGMENT_REQUIRED_BREAKDOWNS).
+    if breakdown in SEGMENT_REQUIRED_BREAKDOWNS:
         segmento_options = SEGMENTOS
         segmento_value = segmento_f if segmento_f != "Total" else SEGMENTOS[0]
     elif is_embalagem:
@@ -1471,11 +1595,12 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     return result
 
 
-def _build_unit_additions_bridge(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
-    """(names, deltas, totals, title) pra aba "Adicoes de Unidades
-    {UNIT_ADDITIONS_YEAR0}->{UNIT_ADDITIONS_YEAR1}": `totals` = {ano:
-    total de Unidades do filtro} pra essa UNICA transicao; `deltas[nome]`
-    = contribuicao daquele nome pra diferenca entre os dois anos (a soma
+def _build_additions_bridge(indicator, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f="Total"):
+    """(names, deltas, totals, title) pra uma aba "Adicoes de X" (ver
+    ADDITIONS_TABS - `indicator` e "unidades" ou "valor_com_presentes")
+    {ADDITIONS_YEAR0}->{ADDITIONS_YEAR1}": `totals` = {ano: total do
+    indicador no filtro} pra essa UNICA transicao; `deltas[nome]` =
+    contribuicao daquele nome pra diferenca entre os dois anos (a soma
     dos deltas de todos os `names` fecha EXATAMENTE com
     `totals[YEAR1] - totals[YEAR0]`).
 
@@ -1486,42 +1611,42 @@ def _build_unit_additions_bridge(breakdown, regiao_view, segmento_f, fabricante_
     Fabricante/Embalagem (todas as categorias exibidas ja fecham o
     total de verdade) nao ha residuo.
 
-    Usado tanto pela tabela (`_unit_additions_table`) quanto, apos
-    reordenar por transicao (ver `_bridge_transition_order`), pelo
-    grafico (`charts.unit_additions_bridge_chart`) - mesma fonte de
-    dados pros dois, entao sempre batem."""
+    Usado tanto pela tabela (`_additions_table`) quanto, apos reordenar
+    por transicao (ver `_bridge_transition_order`), pelo grafico
+    (`charts.unit_additions_bridge_chart`) - mesma fonte de dados pros
+    dois, entao sempre batem."""
     if not breakdown:
         breakdown = "segmento"
     if breakdown not in TOP_N_BREAKDOWNS:
         top_n = _TOP_N
 
-    yr0, yr1 = UNIT_ADDITIONS_YEAR0, UNIT_ADDITIONS_YEAR1
+    yr0, yr1 = ADDITIONS_YEAR0, ADDITIONS_YEAR1
 
     categories, dim_col, filters, values_override, title, true_totals = build_selection(
         breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f,
-        "unidades", top_n, body_splash_f=body_splash_f,
+        indicator, top_n, body_splash_f=body_splash_f,
     )
     if not categories:
         return [], {}, {}, title
 
     if values_override is not None:
-        unidades_values = values_override
+        values = values_override
     else:
-        unidades_values = compute_values(
-            df, "unidades", dim_col, categories, YEARS_DEFAULT, filters, INDICATORS["unidades"]["value_scale"],
+        values = compute_values(
+            df, indicator, dim_col, categories, YEARS_DEFAULT, filters, INDICATORS[indicator]["value_scale"],
         )
 
     totals = {}
     for yr in (yr0, yr1):
-        totals[yr] = true_totals[yr] if true_totals is not None else sum(unidades_values[cat][yr] for cat in categories)
+        totals[yr] = true_totals[yr] if true_totals is not None else sum(values[cat][yr] for cat in categories)
 
     names = list(categories)
-    deltas = {cat: unidades_values[cat][yr1] - unidades_values[cat][yr0] for cat in categories}
+    deltas = {cat: values[cat][yr1] - values[cat][yr0] for cat in categories}
 
     if true_totals is not None:
         residual_label = "Demais outras" if "Outras" in categories else "Outras"
-        residual0 = totals[yr0] - sum(unidades_values[cat][yr0] for cat in categories)
-        residual1 = totals[yr1] - sum(unidades_values[cat][yr1] for cat in categories)
+        residual0 = totals[yr0] - sum(values[cat][yr0] for cat in categories)
+        residual1 = totals[yr1] - sum(values[cat][yr1] for cat in categories)
         names.append(residual_label)
         deltas[residual_label] = residual1 - residual0
 
@@ -1600,41 +1725,62 @@ def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f
     return dcc.send_bytes(pptx_bytes, "Price_Unit.pptx")
 
 
-@app.callback(
-    Output("graph-unit-additions", "figure"),
-    Output("unit-additions-table", "children"),
-    Output("unit-additions-insight", "children"),
-    Input("dimension-dropdown", "value"),
-    Input("regiao-tabs", "value"),
-    Input("segmento-filter", "value"),
-    Input("fabricante-filter", "value"),
-    Input("marca-filter", "value"),
-    Input("submarca-filter", "value"),
-    Input("variante-filter", "value"),
-    Input("subvariante-filter", "value"),
-    Input("top-n-selector", "value"),
-    Input("body-splash-filter", "value"),
-)
-def update_unit_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
-    names, deltas, totals, title = _build_unit_additions_bridge(
-        breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+def _additions_tab_result(cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f):
+    """Logica compartilhada de todas as abas "Adicoes de X" (ver
+    ADDITIONS_TABS) - so o `cfg` (indicador/rotulos daquela aba) muda
+    entre elas, ver _register_additions_callback."""
+    names, deltas, totals, title = _build_additions_bridge(
+        cfg["indicator"], breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
     )
-    cfg = INDICATORS["unidades"]
+    indicator_cfg = INDICATORS[cfg["indicator"]]
     order = _bridge_transition_order(names, deltas) if names else []
     fig = unit_additions_bridge_chart(
-        title, UNIT_ADDITIONS_YEAR0, UNIT_ADDITIONS_YEAR1, totals, order, deltas,
-        value_decimals=cfg["value_decimals"], unit_label="milhões de unidades",
+        title, ADDITIONS_YEAR0, ADDITIONS_YEAR1, totals, order, deltas,
+        value_decimals=indicator_cfg["value_decimals"], unit_label=cfg["chart_unit_label"],
     )
     # SEM fig.update_layout(autosize=True, width=None) - ao contrario dos
     # outros graficos, este NAO e responsivo: a largura cresce com o
     # numero de blocos (ate 30 categorias), ver
     # charts.unit_additions_bridge_chart e o container com scroll
-    # horizontal em app.layout
-    table = _unit_additions_table(names, deltas, cfg["value_decimals"])
+    # horizontal em app.layout (_additions_panel)
+    table = _additions_table(names, deltas, indicator_cfg["value_decimals"])
     insight = generate_unit_additions_insight(
-        names, deltas, totals, UNIT_ADDITIONS_YEAR0, UNIT_ADDITIONS_YEAR1, unit_label=cfg["unit_label"],
+        names, deltas, totals, ADDITIONS_YEAR0, ADDITIONS_YEAR1,
+        unit_label=indicator_cfg["unit_label"], indicator_label=cfg["insight_label"],
     )
     return fig, table, insight
+
+
+def _register_additions_callback(cfg):
+    """Registra o callback de uma aba "Adicoes de X" (ver ADDITIONS_TABS).
+    Fabrica separada (em vez de um loop com `@app.callback` direto) pra
+    `cfg` ficar preso por valor a cada callback via default de parametro,
+    nao por referencia a variavel de loop (que apontaria pra ultima
+    entrada de ADDITIONS_TABS em todas as chamadas)."""
+
+    @app.callback(
+        Output(cfg["graph_id"], "figure"),
+        Output(cfg["table_id"], "children"),
+        Output(cfg["insight_id"], "children"),
+        Input("dimension-dropdown", "value"),
+        Input("regiao-tabs", "value"),
+        Input("segmento-filter", "value"),
+        Input("fabricante-filter", "value"),
+        Input("marca-filter", "value"),
+        Input("submarca-filter", "value"),
+        Input("variante-filter", "value"),
+        Input("subvariante-filter", "value"),
+        Input("top-n-selector", "value"),
+        Input("body-splash-filter", "value"),
+    )
+    def update_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, cfg=cfg):
+        return _additions_tab_result(
+            cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
+        )
+
+
+for _additions_cfg in ADDITIONS_TABS:
+    _register_additions_callback(_additions_cfg)
 
 
 if __name__ == "__main__":

@@ -272,6 +272,20 @@ def generate_price_unit_insight(
     return text
 
 
+def _format_bridge_amount(value: float, unit_label: str, signed: bool = False) -> str:
+    """Formata um valor (ja escalado) + unidade pro texto de
+    `generate_unit_additions_insight`. Unidades monetarias (`unit_label`
+    comecando com "R$", ex.: "R$ milhões") ficam com o "R$" ANTES do
+    numero ("R$ 1.216,47 milhões") - concatenar {numero} {unit_label}
+    direto (como as demais unidades, ex.: "milhões", "milhões de
+    unidades") daria "1.216,47 R$ milhões", que nao faz sentido em
+    portugues."""
+    prefix, unit = ("R$ ", unit_label[2:].strip()) if unit_label.startswith("R$") else ("", unit_label)
+    number = f"{value:+,.2f}" if signed else f"{abs(value):,.2f}"
+    suffix = f" {unit}" if unit else ""
+    return f"{prefix}{number}{suffix}"
+
+
 def generate_unit_additions_insight(
     names: list[str],
     deltas: dict[str, float],
@@ -279,13 +293,15 @@ def generate_unit_additions_insight(
     yr0: str,
     yr1: str,
     unit_label: str = "milhões",
+    indicator_label: str = "Unidades",
 ) -> str:
     """Comentario pro bridge chart de `charts.unit_additions_bridge_chart`
     (transicao UNICA yr0->yr1, ex.: 2024->2025): quem mais empurrou o
-    total de Unidades pra cima e pra baixo, junto com a variacao do
-    total nesse periodo. `names`/`deltas`/`totals`: mesma estrutura
-    devolvida por `app._build_unit_additions_bridge` (inclui a
-    categoria residual "Outras"/"Demais outras" quando aplicavel)."""
+    total de `indicator_label` (ex.: "Unidades", "Valor com Presentes" -
+    ver `app.ADDITIONS_TABS`) pra cima e pra baixo, junto com a variacao
+    do total nesse periodo. `names`/`deltas`/`totals`: mesma estrutura
+    devolvida por `app._build_additions_bridge` (inclui a categoria
+    residual "Outras"/"Demais outras" quando aplicavel)."""
     if not names:
         return ""
     total_delta = totals[yr1] - totals[yr0]
@@ -299,11 +315,11 @@ def generate_unit_additions_insight(
     gain_delta, loss_delta = deltas[top_gain], deltas[top_loss]
 
     parts = [
-        f"O total de Unidades {total_verb} {abs(total_delta):,.2f} {unit_label} em {yr_label} "
+        f"O total de {indicator_label} {total_verb} {_format_bridge_amount(total_delta, unit_label)} em {yr_label} "
         f"(ante {prev_label})."
     ]
     if gain_delta > 0:
-        parts.append(f"{top_gain} liderou o crescimento, contribuindo com +{gain_delta:,.2f} {unit_label}.")
+        parts.append(f"{top_gain} liderou o crescimento, contribuindo com {_format_bridge_amount(gain_delta, unit_label, signed=True)}.")
     if loss_delta < 0 and top_loss != top_gain:
-        parts.append(f"{top_loss} puxou a queda, com {loss_delta:,.2f} {unit_label}.")
+        parts.append(f"{top_loss} puxou a queda, com {_format_bridge_amount(loss_delta, unit_label, signed=True)}.")
     return " ".join(parts)
