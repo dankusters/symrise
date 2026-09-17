@@ -15,6 +15,7 @@ Regras aplicadas (decididas em conjunto com o usuario, ver ESCOPO.md):
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 import pandas as pd
 
@@ -23,6 +24,27 @@ SHEET_NAME = "Relatório Completo"
 
 BODY_SPLASH_PATH = "fonte/body_splash.xlsx"
 BODY_SPLASH_SHEET = "2025"
+
+CATEGORY_EXCEPTIONS_PATH = "fonte/change_category.xlsx"
+CATEGORY_EXCEPTIONS_SHEET = "2025"
+
+# aliases aceitos na planilha de excecoes pra cada classificacao "oficial"
+# (a que o resto do codigo usa pra decidir quebra/nivel) - a planilha e
+# preenchida a mao e varia grafia/espacamento (ex.: "Submarca" ou "Sub
+# marca" em vez de "Sub Marca")
+_CLASSIFICACAO_ALIASES = {
+    "fabricante": "Fabricante",
+    "marca": "Marca",
+    "submarca": "Sub Marca",
+    "sub marca": "Sub Marca",
+    "variante": "Variante",
+    "subvariante": "Sub Variante",
+    "sub variante": "Sub Variante",
+}
+
+
+def _normalize_classificacao(raw: str) -> str:
+    return _CLASSIFICACAO_ALIASES.get(raw.strip().lower(), raw.strip())
 
 CATEGORY_COLUMNS = {
     "Região": "regiao",
@@ -128,6 +150,68 @@ def load_body_splash(path: str = BODY_SPLASH_PATH, sheet_name: str = BODY_SPLASH
     return bs.set_index("Cód.")["IsBodySplash"]
 
 
+@lru_cache(maxsize=None)
+def load_category_exceptions(
+    path: str = CATEGORY_EXCEPTIONS_PATH, sheet_name: str = CATEGORY_EXCEPTIONS_SHEET,
+) -> tuple[dict[str, str], frozenset[str], dict[str, frozenset[str]], list[dict]]:
+    """Le fonte/change_category.xlsx (aba "2025", classificada a mao pelo
+    usuario por Cod. - ex.: a familia Ekos, que vinha com Submarca/
+    Variante/Sub Variante um nivel raso demais na planilha principal) e
+    devolve 3 estruturas que corrigem posicoes especificas da arvore SEM
+    tocar no Cod. em si:
+
+    - overrides ({cod: nova_classificacao}, coluna "Classificação_nova"):
+      reclassifica a PROPRIA linha - so o rotulo usado pra decidir em
+      que nivel da quebra ela conta muda, nao a posicao na arvore. Como
+      o pai dela no Cod. em geral ja tem o MESMO rotulo novo (ver
+      conversa sobre Ekos-Cf/T. Egeo Choc-Cf), a descida naturalmente
+      para de enxergar essa linha como categoria propria e passa a
+      descer pra dentro dela, revelando os filhos daquele nivel.
+    - ignore_cods ({cod, ...}, coluna "IgnoreAtAll"="Sim"): reforco
+      explicito do efeito acima pra quando o pai NAO compartilha o
+      mesmo rotulo (sem essa garantia estrutural, so o override nao
+      esconderia a linha) - esses cods nunca viram categoria propria em
+      nenhuma quebra, mas a descida continua normal pros filhos deles
+      (ver `_descend_scoped` em app.py).
+    - extensions ({cod: {classificacao, ...}}, coluna "ExtendCategory",
+      lista separada por virgula): registra o nome de uma entidade "sem
+      filhos" (ex.: WePink, Granado, Phebo - Fabricante/Marca que a
+      planilha nao detalha mais fundo) como TAMBEM selecionavel nesses
+      niveis extras nos dropdowns de filtro - a quebra em si ja mostra
+      essas entidades certo em qualquer nivel (fallback generico de
+      folha em `_descend_scoped`), so faltava poder fixa-las como
+      filtro nesses niveis (ver `_self_cod`/dropdowns em app.py).
+    - changes (lista de dicts com `cod`/`nome`/`de`/`para`): so as linhas
+      onde a reclassificacao muda de verdade o rotulo (`Classificação_
+      nova` preenchida e diferente de `Classificação_atual`) - usado
+      pela pagina "Considerações" do app (ver app._considerations_layout),
+      documentando as mudancas pro usuario sem precisar hardcodar texto
+      (cresce sozinho conforme a planilha ganha novas linhas)."""
+    ex = pd.read_excel(
+        path, sheet_name=sheet_name,
+        usecols=["Cód.", "Marcas", "Classificação_atual", "Classificação_nova", "IgnoreAtAll", "ExtendCategory"],
+    )
+    ex["Cód."] = ex["Cód."].astype(str).str.strip()
+
+    overrides = {
+        cod: _normalize_classificacao(nova)
+        for cod, nova in ex.dropna(subset=["Classificação_nova"])[["Cód.", "Classificação_nova"]].itertuples(index=False)
+    }
+    ignore_cods = frozenset(ex.loc[ex["IgnoreAtAll"].astype(str).str.strip().str.lower() == "sim", "Cód."])
+    extensions = {
+        cod: frozenset(_normalize_classificacao(c) for c in extend.split(","))
+        for cod, extend in ex.dropna(subset=["ExtendCategory"])[["Cód.", "ExtendCategory"]].itertuples(index=False)
+    }
+    changes = [
+        {"cod": cod, "nome": nome, "de": _normalize_classificacao(atual), "para": _normalize_classificacao(nova)}
+        for cod, nome, atual, nova in ex.dropna(subset=["Classificação_nova"])[
+            ["Cód.", "Marcas", "Classificação_atual", "Classificação_nova"]
+        ].itertuples(index=False)
+        if _normalize_classificacao(atual) != _normalize_classificacao(nova)
+    ]
+    return overrides, ignore_cods, extensions, changes
+
+
 def build_dataset(path: str = SOURCE_PATH, sheet_name: str = SHEET_NAME) -> pd.DataFrame:
     """Monta o dataframe final (wide), com tipos e escalas corrigidos."""
     df = load_raw(path, sheet_name)
@@ -137,6 +221,12 @@ def build_dataset(path: str = SOURCE_PATH, sheet_name: str = SHEET_NAME) -> pd.D
 
     for col in ("regiao", "segmento", "fabricante", "marca", "classificacao", "rotulo"):
         df[col] = df[col].astype(str).str.strip()
+
+    # excecoes de reclassificacao (ver load_category_exceptions/conversa
+    # sobre a familia Ekos) - so a classificacao muda, o Cod. permanece
+    # o mesmo em toda a base
+    category_overrides, _, _, _ = load_category_exceptions()
+    df["classificacao"] = df["cod"].map(category_overrides).fillna(df["classificacao"])
 
     df["marca"] = df["marca"].map(_fix_marca)
 

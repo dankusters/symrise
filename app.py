@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from dash import Dash, Input, Output, State, dcc, html
+from dash import Dash, Input, Output, State, ctx, dcc, html
 
 from charts import (
     YEARS_DEFAULT,
@@ -24,7 +24,7 @@ from charts import (
     price_unit_waterfall_chart,
     unit_additions_bridge_chart,
 )
-from etl import build_dataset
+from etl import build_dataset, load_category_exceptions
 from export_pptx import TABLE_LEGEND_NO_SHARE, TABLE_LEGEND_WITH_SHARE, build_price_unit_pptx, build_pptx
 from insights import generate_insight, generate_price_unit_insight, generate_unit_additions_insight
 
@@ -86,6 +86,58 @@ ALL_MARCAS = sorted(df.loc[df["classificacao"] == "Marca", "marca"].unique())
 ALL_SUBMARCAS = sorted(df.loc[df["classificacao"] == "Sub Marca", "rotulo"].unique())
 ALL_VARIANTES = sorted(df.loc[df["classificacao"] == "Variante", "rotulo"].unique())
 ALL_SUBVARIANTES = sorted(df.loc[df["classificacao"] == "Sub Variante", "rotulo"].unique())
+
+# ExtendCategory (ver etl.load_category_exceptions/conversa sobre WePink,
+# Granado, Granado Bebe, Phebo): entidades "sem filhos" na arvore (a
+# quebra ja mostra elas certo em qualquer nivel, via o fallback generico
+# de folha em _descend_scoped) que ficam TAMBEM selecionaveis como
+# filtro em niveis mais fundos do que a classificacao original permite -
+# ex.: WePink (Fabricante) tambem funciona como filtro de Marca/
+# Submarca. EXTENDED_NAMES reindexa `_extensions_by_cod` (vindo por Cod.)
+# pelo nome de exibicao (coluna "marca", que pra essas entidades ja e a
+# mesma nos dois papeis - fabricante="WePink" e marca="WePink"), pra
+# poder re-resolver o cod em QUALQUER regiao/segmento onde esse nome
+# aparecer (ver _self_cod), nao so na linha de exemplo da planilha de
+# excecoes.
+_, IGNORE_CODS, _extensions_by_cod, CATEGORY_CHANGES = load_category_exceptions()
+# {nome: (classificacao nativa, niveis extras)} - guarda a classificacao
+# nativa tambem (nao so o nome) porque o mesmo nome de "marca" pode
+# aparecer em mais de uma linha (ex.: "Granado" e o nome tanto do
+# Fabricante-raiz "T. Granado" quanto da Marca "Granado" em si) - sem
+# isso, o fallback de _self_cod poderia resolver pro cod errado (o
+# Fabricante inteiro, nao so a entidade sendo estendida)
+EXTENDED_NAMES: dict[str, tuple[str, frozenset[str]]] = {}
+for _ext_cod, _ext_labels in _extensions_by_cod.items():
+    _ext_rows = df.loc[df["cod"] == _ext_cod, ["marca", "classificacao"]]
+    if not _ext_rows.empty:
+        _ext_name = _ext_rows["marca"].iloc[0]
+        EXTENDED_NAMES[_ext_name] = (_ext_rows["classificacao"].iloc[0], _ext_labels)
+
+for _ext_name, (_ext_native, _ext_labels) in EXTENDED_NAMES.items():
+    if "Marca" in _ext_labels:
+        if _ext_name not in ALL_MARCAS:
+            ALL_MARCAS = sorted(ALL_MARCAS + [_ext_name])
+        MARCA_BY_FABRICANTE.setdefault(_ext_name, [])
+        if _ext_name not in MARCA_BY_FABRICANTE[_ext_name]:
+            MARCA_BY_FABRICANTE[_ext_name] = sorted(MARCA_BY_FABRICANTE[_ext_name] + [_ext_name])
+    if "Sub Marca" in _ext_labels:
+        if _ext_name not in ALL_SUBMARCAS:
+            ALL_SUBMARCAS = sorted(ALL_SUBMARCAS + [_ext_name])
+        SUBMARCA_BY_MARCA.setdefault(_ext_name, [])
+        if _ext_name not in SUBMARCA_BY_MARCA[_ext_name]:
+            SUBMARCA_BY_MARCA[_ext_name] = sorted(SUBMARCA_BY_MARCA[_ext_name] + [_ext_name])
+    if "Variante" in _ext_labels:
+        if _ext_name not in ALL_VARIANTES:
+            ALL_VARIANTES = sorted(ALL_VARIANTES + [_ext_name])
+        VARIANTE_BY_MARCA.setdefault(_ext_name, [])
+        if _ext_name not in VARIANTE_BY_MARCA[_ext_name]:
+            VARIANTE_BY_MARCA[_ext_name] = sorted(VARIANTE_BY_MARCA[_ext_name] + [_ext_name])
+    if "Sub Variante" in _ext_labels:
+        if _ext_name not in ALL_SUBVARIANTES:
+            ALL_SUBVARIANTES = sorted(ALL_SUBVARIANTES + [_ext_name])
+        SUBVARIANTE_BY_MARCA.setdefault(_ext_name, [])
+        if _ext_name not in SUBVARIANTE_BY_MARCA[_ext_name]:
+            SUBVARIANTE_BY_MARCA[_ext_name] = sorted(SUBVARIANTE_BY_MARCA[_ext_name] + [_ext_name])
 
 # ordem da cadeia Fabricante > Marca > Sub Marca > Variante > Sub
 # Variante, usada pra decidir quais filtros ficam habilitados pra cada
@@ -434,7 +486,13 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
         if rows.empty:
             return True  # existiam filhos, so que todos excluidos - nao e uma folha "sem dados"
 
-    at_target = rows["classificacao"].isin(target_classificacoes)
+    # IGNORE_CODS (ver etl.load_category_exceptions/"IgnoreAtAll"): esses
+    # cods nunca viram categoria propria em nenhuma quebra, mesmo que a
+    # classificacao (original ou reclassificada) bata com o alvo - so
+    # reforca pra quando o pai no Cod. nao compartilha o mesmo rotulo
+    # novo (ver docstring de load_category_exceptions); a descida
+    # continua normal pros filhos deles logo abaixo.
+    at_target = rows["classificacao"].isin(target_classificacoes) & ~rows["cod"].isin(IGNORE_CODS)
     direct = rows[at_target]
     # filtro IsBodySplash (ver BODY_SPLASH_OPTIONS): so restringe as
     # linhas que de fato VIRAM categoria (aqui e no fallback de folha
@@ -452,6 +510,8 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
     for row in rows[~at_target].itertuples():
         found = _descend_scoped(scale, dim_col, scoped_df, row.cod, target_classificacoes, exclude_classificacoes, year_cols, result, add, body_splash_f)
         if not found:
+            if row.cod in IGNORE_CODS:
+                continue  # ignorado (ver IGNORE_CODS acima): folha sem filhos, mas nunca vira categoria propria
             if body_splash_f != "Total" and row.is_body_splash != body_splash_f:
                 continue  # folha que nao bate com o filtro IsBodySplash
             # folha antes de chegar no nivel alvo (a planilha nao detalha
@@ -611,7 +671,16 @@ def _regiao_root_values(
 
 def _self_cod(regiao_view, segmento_f, classificacao, fabricante=None, marca=None, rotulo=None):
     """Cod. da linha 'auto-total' de uma entidade (ex.: a propria linha
-    Marca=Eudora), usado como `parent_cod` pra buscar os filhos dela."""
+    Marca=Eudora), usado como `parent_cod` pra buscar os filhos dela.
+
+    Quando a busca estrita (por `classificacao`) nao acha nada, tenta
+    EXTENDED_NAMES (ver ExtendCategory/conversa sobre WePink/Granado/
+    Phebo): entidades "sem filhos" registradas como tambem validas num
+    nivel mais fundo do que a classificacao original delas - reconsulta
+    `df` pelo nome (coluna "marca", que pra essas entidades e a mesma
+    em qualquer papel) na MESMA regiao/segmento pedidos, sem exigir
+    `classificacao`, entao funciona em qualquer combinacao onde esse
+    nome tiver uma linha - nao so no exemplo da planilha de excecoes."""
     subset = df[
         (df["regiao"] == regiao_view) & (df["segmento"] == segmento_f) & (df["classificacao"] == classificacao)
     ]
@@ -621,7 +690,20 @@ def _self_cod(regiao_view, segmento_f, classificacao, fabricante=None, marca=Non
         subset = subset[subset["marca"] == marca]
     if rotulo is not None:
         subset = subset[subset["rotulo"] == rotulo]
-    return subset["cod"].iloc[0] if not subset.empty else None
+    if not subset.empty:
+        return subset["cod"].iloc[0]
+
+    name = rotulo if rotulo is not None else marca if marca is not None else fabricante
+    extended = EXTENDED_NAMES.get(name)
+    if extended and classificacao in extended[1]:
+        native_classificacao = extended[0]
+        ext_subset = df[
+            (df["regiao"] == regiao_view) & (df["segmento"] == segmento_f)
+            & (df["marca"] == name) & (df["classificacao"] == native_classificacao)
+        ]
+        if not ext_subset.empty:
+            return ext_subset["cod"].iloc[0]
+    return None
 
 
 def _fabricante_root_cod(regiao_view, segmento_f):
@@ -664,19 +746,44 @@ def _selection_start_cod(regiao_view, segmento_f, fabricante_f, marca_f, submarc
     return _fabricante_root_cod(regiao_view, segmento_f)
 
 
+def _native_classificacao(name, default):
+    """Classificacao a usar num filtro exato de `df` pra `name` - a
+    "oficial" (`default`) pra entidades normais, ou a NATIVA (ver
+    EXTENDED_NAMES/ExtendCategory) quando `name` e uma entidade "sem
+    filhos" registrada como tambem valida em `default` mas classificada
+    de verdade num nivel mais raso (ex.: Granado e "Marca", nao "Sub
+    Marca", mesmo selecionavel como Submarca) - sem isso, um filtro
+    exato por `classificacao == default` nao acharia a linha dela."""
+    extended = EXTENDED_NAMES.get(name)
+    return extended[0] if extended and default in extended[1] else default
+
+
 def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
     """Filtros de Fabricante/Marca/Submarca/Variante/Sub Variante/
     Classificacao usados quando a quebra do grafico e Segmento (isto e,
     essas dimensoes ficam fixas no nivel mais profundo escolhido, e
     Segmento vira a dimensao variavel)."""
-    if subvariante_f and subvariante_f != "Total":
-        return {"classificacao": "Sub Variante", "fabricante": fabricante_f, "marca": marca_f, "rotulo": subvariante_f}
-    if variante_f and variante_f != "Total":
-        return {"classificacao": "Variante", "fabricante": fabricante_f, "marca": marca_f, "rotulo": variante_f}
-    if submarca_f and submarca_f != "Total":
-        return {"classificacao": "Sub Marca", "fabricante": fabricante_f, "marca": marca_f, "rotulo": submarca_f}
+    for value, default in (
+        (subvariante_f, "Sub Variante"),
+        (variante_f, "Variante"),
+        (submarca_f, "Sub Marca"),
+    ):
+        if not value or value == "Total":
+            continue
+        extended = EXTENDED_NAMES.get(value)
+        if extended and default in extended[1]:
+            # entidade "sem filhos" (ver ExtendCategory/EXTENDED_NAMES) -
+            # mesma linha de sempre, so identificada pela classificacao
+            # NATIVA e por "marca" (nao por `rotulo`, que pode ser bem
+            # diferente do nome usado no dropdown - ex.: WePink tem
+            # rotulo "T. We Pink"/"T. WePInk - Cf" - nem por fabricante/
+            # marca_f, que podem ainda estar em "Total" se o usuario
+            # pulou direto pro dropdown mais fundo, ver update_*_options)
+            return {"classificacao": extended[0], "marca": value}
+        return {"classificacao": default, "fabricante": fabricante_f, "marca": marca_f, "rotulo": value}
     if marca_f and marca_f != "Total":
-        return {"classificacao": "Marca", "fabricante": fabricante_f, "marca": marca_f}
+        classificacao = _native_classificacao(marca_f, "Marca")
+        return {"classificacao": classificacao, "fabricante": fabricante_f, "marca": marca_f}
     if fabricante_f and fabricante_f != "Total":
         return {"classificacao": "Fabricante", "fabricante": fabricante_f}
     return {"classificacao": "Total", "fabricante": "Total", "marca": "Total", "cod": "1"}
@@ -1155,14 +1262,136 @@ def _chart_block(key):
     )
 
 
+_CONS_TH_STYLE = {"textAlign": "left", "padding": "6px 12px", "borderBottom": "2px solid #ddd", "fontSize": "13px", "color": "#666"}
+_CONS_TD_STYLE = {"padding": "6px 12px", "borderBottom": "1px solid #eee", "fontSize": "14px"}
+
+
+def _considerations_reclass_table():
+    """Tabela De -> Para das reclassificacoes (ver CATEGORY_CHANGES/
+    etl.load_category_exceptions, coluna "Classificação_nova") - gerada
+    direto do arquivo de excecoes, entao cresce sozinha conforme
+    fonte/change_category.xlsx ganha novas linhas, sem precisar editar
+    esta pagina."""
+    if not CATEGORY_CHANGES:
+        return html.P("Nenhuma reclassificação registrada.", style={"color": "#666"})
+    return html.Table(
+        style={"borderCollapse": "collapse", "width": "100%", "marginBottom": "8px"},
+        children=[
+            html.Thead(html.Tr([
+                html.Th("Produto", style=_CONS_TH_STYLE),
+                html.Th("Cód.", style=_CONS_TH_STYLE),
+                html.Th("De", style=_CONS_TH_STYLE),
+                html.Th("Para", style=_CONS_TH_STYLE),
+            ])),
+            html.Tbody([
+                html.Tr([
+                    html.Td(change["nome"], style=_CONS_TD_STYLE),
+                    html.Td(change["cod"], style={**_CONS_TD_STYLE, "color": "#888", "fontFamily": "monospace"}),
+                    html.Td(change["de"], style=_CONS_TD_STYLE),
+                    html.Td(f"→ {change['para']}", style={**_CONS_TD_STYLE, "fontWeight": "600"}),
+                ])
+                for change in CATEGORY_CHANGES
+            ]),
+        ],
+    )
+
+
+def _considerations_extend_list():
+    """Lista das entidades "sem filhos" (ver EXTENDED_NAMES/
+    ExtendCategory) selecionaveis como filtro em niveis extras."""
+    if not EXTENDED_NAMES:
+        return html.P("Nenhuma extensão registrada.", style={"color": "#666"})
+    return html.Ul(
+        style={"marginTop": "8px"},
+        children=[
+            html.Li(f"{name} — também selecionável como {', '.join(sorted(labels))}", style={"marginBottom": "4px"})
+            for name, (native, labels) in sorted(EXTENDED_NAMES.items())
+        ],
+    )
+
+
+_CONSIDERATIONS_STYLE = {
+    "fontFamily": "'Roboto', -apple-system, Helvetica, Arial, sans-serif",
+    "maxWidth": "900px", "margin": "0 auto", "padding": "24px",
+}
+
+
+def _considerations_layout():
+    """Pagina "Considerações": resumo das reclassificacoes manuais feitas
+    em fonte/change_category.xlsx (ver etl.load_category_exceptions),
+    pra quem olha os numeros do dashboard entender rapido o que mudou em
+    relacao a planilha original, sem precisar ler o codigo."""
+    return html.Div(
+        id="considerations-view",
+        style={**_CONSIDERATIONS_STYLE, "display": "none"},
+        children=[
+            html.Div(
+                style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "20px"},
+                children=[
+                    html.Img(src=app.get_asset_url("symrise_logo.png"), style={"height": "30px"}),
+                    html.H2("Considerações", style={"margin": 0, "flex": "1"}),
+                    html.Button(
+                        "← Voltar ao dashboard",
+                        id="considerations-close-btn",
+                        n_clicks=0,
+                        style={
+                            "fontSize": "13px", "padding": "6px 12px", "cursor": "pointer",
+                            "border": "1px solid #ccc", "borderRadius": "4px", "background": "white", "color": "#333",
+                        },
+                    ),
+                ],
+            ),
+            html.P(
+                "Alguns produtos vinham classificados num nível diferente do "
+                "real na planilha fonte. Esta página resume os ajustes manuais "
+                "feitos (ver fonte/change_category.xlsx) para que os números do "
+                "dashboard reflitam a hierarquia correta.",
+                style={"color": "#444", "lineHeight": "1.6", "marginBottom": "24px"},
+            ),
+            html.H4("Reclassificações"),
+            html.P(
+                "O Cód. (posição na árvore) não muda — só o nível considerado "
+                "na quebra/gráfico. Um produto reclassificado para o mesmo "
+                "nível do seu pai direto na árvore deixa de aparecer como "
+                "categoria própria e seus filhos passam a aparecer um nível "
+                "acima (ex.: família Ekos, dentro de Natura).",
+                style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
+            ),
+            _considerations_reclass_table(),
+            html.H4("Selecionáveis em níveis extras", style={"marginTop": "28px"}),
+            html.P(
+                "Marcas/fabricantes sem detalhamento na planilha (não têm "
+                "submarca/variante) que passaram a também aparecer nos "
+                "dropdowns de filtro nesses níveis mais fundos.",
+                style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5"},
+            ),
+            _considerations_extend_list(),
+        ],
+    )
+
+
+_MAIN_DASHBOARD_STYLE = {"fontFamily": "'Roboto', -apple-system, Helvetica, Arial, sans-serif", "maxWidth": "1400px", "margin": "0 auto", "padding": "24px"}
+
 app.layout = html.Div(
-    style={"fontFamily": "'Roboto', -apple-system, Helvetica, Arial, sans-serif", "maxWidth": "1400px", "margin": "0 auto", "padding": "24px"},
+    children=[
+        html.Div(
+    id="main-dashboard-view",
+    style=_MAIN_DASHBOARD_STYLE,
     children=[
         html.Div(
             style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "8px"},
             children=[
                 html.Img(src=app.get_asset_url("symrise_logo.png"), style={"height": "30px"}),
-                html.H2("Worldpanel Dashboard", style={"margin": 0}),
+                html.H2("Worldpanel Dashboard", style={"margin": 0, "flex": "1"}),
+                html.Button(
+                    "Considerações",
+                    id="considerations-open-btn",
+                    n_clicks=0,
+                    style={
+                        "fontSize": "13px", "padding": "6px 12px", "cursor": "pointer",
+                        "border": "1px solid #ccc", "borderRadius": "4px", "background": "white", "color": "#333",
+                    },
+                ),
             ],
         ),
         dcc.Tabs(
@@ -1297,7 +1526,30 @@ app.layout = html.Div(
             ),
         ),
     ],
+        ),
+        _considerations_layout(),
+    ],
 )
+
+
+@app.callback(
+    Output("main-dashboard-view", "style"),
+    Output("considerations-view", "style"),
+    Input("considerations-open-btn", "n_clicks"),
+    Input("considerations-close-btn", "n_clicks"),
+)
+def _toggle_considerations(_open_clicks, _close_clicks):
+    # dispara pelo Input que mudou por ultimo (ver dash.ctx) - simples
+    # toggle de visibilidade entre as duas "paginas" (ver
+    # _considerations_layout), sem precisar de roteamento por URL real.
+    # Preserva o resto do style (fontFamily/maxWidth/...) de
+    # _MAIN_DASHBOARD_STYLE - so troca "display", nao substitui o dict
+    # inteiro.
+    triggered = ctx.triggered_id
+    if triggered == "considerations-open-btn":
+        return {**_MAIN_DASHBOARD_STYLE, "display": "none"}, {**_CONSIDERATIONS_STYLE, "display": "block"}
+    return {**_MAIN_DASHBOARD_STYLE, "display": "block"}, {**_CONSIDERATIONS_STYLE, "display": "none"}
+
 
 _ALL_TAB_KEYS = INDICATOR_BLOCKS + [PRICE_UNIT_TAB_KEY] + [cfg["key"] for cfg in ADDITIONS_TABS]
 
