@@ -512,6 +512,17 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
         if not found:
             if row.cod in IGNORE_CODS:
                 continue  # ignorado (ver IGNORE_CODS acima): folha sem filhos, mas nunca vira categoria propria
+            # ExtendCategory (ver EXTENDED_NAMES): uma entidade "sem
+            # filhos" registrada so conta como categoria propria ate o
+            # nivel mais fundo que ela foi estendida (nativo +
+            # ExtendCategory) - alem disso (ex.: WePink numa quebra por
+            # Variante, so estendida ate Sub Marca) ela e ignorada
+            # tambem, mesmo sendo uma folha de verdade - sem essa
+            # checagem o fallback abaixo a mostraria em QUALQUER nivel
+            # (toda folha sem filhos vira categoria propria por padrao).
+            extended = EXTENDED_NAMES.get(row.marca)
+            if extended and not (target_classificacoes & ({extended[0]} | extended[1])):
+                continue
             if body_splash_f != "Total" and row.is_body_splash != body_splash_f:
                 continue  # folha que nao bate com o filtro IsBodySplash
             # folha antes de chegar no nivel alvo (a planilha nao detalha
@@ -519,6 +530,8 @@ def _descend_scoped(scale, dim_col, scoped_df, start_cod, target_classificacoes,
             name = getattr(row, dim_col)
             if name == "Total":
                 name = getattr(row, "rotulo")
+            if name in EXCLUDE_NAMES_FROM_RANKING:
+                continue
             for yr, col in zip(YEARS_DEFAULT, year_cols):
                 add(name, yr, float(getattr(row, col)) * scale)
 
@@ -859,11 +872,25 @@ def _resolve_unit(key, values, categories, true_totals=None, years=YEARS_DEFAULT
     return values, true_totals, unit_millions, None
 
 
-# classificacao excluida da descida de Submarca/Variante: "Outros
-# Fabricante" e o residual de empresas nao rastreadas (nunca uma
-# submarca/variante de verdade), entao nao concorre por uma vaga no
-# ranking nem aparece como "folha" generica quando nao tem detalhe
-_EXCLUDE_FROM_RANKING = frozenset({"Outros Fabricante"})
+# classificacao excluida da descida de Marca/Submarca/Variante/Sub
+# Variante: cada "Outros X" e o residual de entidades nao rastreadas
+# individualmente dentro do nivel anterior (Outros Fabricante = empresas
+# nao rastreadas, Outros Marca = submarcas nao rastreadas dentro de uma
+# marca, Outros Sub Marca = variantes nao rastreadas dentro de uma
+# submarca, Outros Variante = sub variantes nao rastreadas dentro de uma
+# variante) - nunca uma entidade de verdade daquele nivel, entao nao
+# concorre por uma vaga no ranking (top N) nem aparece como "folha"
+# generica quando nao tem detalhe (ver conversa com o usuario)
+_EXCLUDE_FROM_RANKING = frozenset({"Outros Fabricante", "Outros Marca", "Outros Sub Marca", "Outros Variante"})
+
+# nomes excluidos do ranking por identidade (nao por classificacao, ver
+# _EXCLUDE_FROM_RANKING acima) - "Importados-Cf"/"Importados-Cm" e um
+# residual de importados nao rastreados individualmente (classificacao
+# "Total", cod raso demais pra entrar no filtro por classificacao), mas
+# aparece hoje como "folha" generica em qualquer quebra por Marca/
+# Submarca/Variante/Sub Variante (ver conversa com o usuario) - excluido
+# explicitamente por nome em vez de classificacao.
+EXCLUDE_NAMES_FROM_RANKING = frozenset({"Importados-Cf", "Importados-Cm"})
 
 
 def build_selection(
@@ -959,8 +986,11 @@ def build_selection(
             start_cod = _self_cod(regiao_view, segmento_f, "Fabricante", fabricante=fabricante_f)
         else:
             start_cod = _fabricante_root_cod(regiao_view, segmento_f)
-        values_all = _descend_to_level(indicator_id, "marca", base_filters, start_cod, {"Marca"})
-        weight_all = _descend_to_level(weight_indicator, "marca", base_filters, start_cod, {"Marca"}) if weight_indicator else None
+        values_all = _descend_to_level(indicator_id, "marca", base_filters, start_cod, {"Marca"}, _EXCLUDE_FROM_RANKING)
+        weight_all = (
+            _descend_to_level(weight_indicator, "marca", base_filters, start_cod, {"Marca"}, _EXCLUDE_FROM_RANKING)
+            if weight_indicator else None
+        )
         # add_other=False (sem bucket sintetico "Outras"/"Demais outras")
         # + true_totals real: mesmo tratamento de Submarca/Variante (ver
         # abaixo) - o top N exibido e so um recorte, nao fecha o total
@@ -1310,6 +1340,49 @@ def _considerations_extend_list():
     )
 
 
+def _considerations_body_splash_table():
+    """Tabela Marca/Submarca/Body Splash (ver etl.load_body_splash,
+    fonte/body_splash.xlsx) - so linhas de Submarca de verdade tem essa
+    classificacao confiavel (ver BODY_SPLASH_BREAKDOWNS/comentario em
+    update_filters_disabled), por isso a tabela filtra so classificacao
+    == "Sub Marca". Ordenada com "Sim" primeiro pra ressaltar quais
+    submarcas sao Body Splash - a maioria e "Não" (nao listada linha a
+    linha, so contada no resumo), senao a tabela ficaria enorme."""
+    sub = df.loc[df["classificacao"] == "Sub Marca", ["marca", "rotulo", "is_body_splash"]].drop_duplicates()
+    sim = sub[sub["is_body_splash"] == "Sim"].sort_values(["marca", "rotulo"])
+    if sim.empty:
+        return html.P("Nenhuma submarca classificada como Body Splash.", style={"color": "#666"})
+    rows = [
+        html.Tr([
+            html.Td(marca, style=_CONS_TD_STYLE),
+            html.Td(rotulo, style=_CONS_TD_STYLE),
+            html.Td(
+                "Sim",
+                style={**_CONS_TD_STYLE, "fontWeight": "600", "color": "#1E8E5A"},
+            ),
+        ])
+        for marca, rotulo, _ in sim.itertuples(index=False)
+    ]
+    return html.Div([
+        html.Table(
+            style={"borderCollapse": "collapse", "width": "100%", "marginBottom": "8px"},
+            children=[
+                html.Thead(html.Tr([
+                    html.Th("Marca", style=_CONS_TH_STYLE),
+                    html.Th("Submarca", style=_CONS_TH_STYLE),
+                    html.Th("Body Splash", style=_CONS_TH_STYLE),
+                ])),
+                html.Tbody(rows),
+            ],
+        ),
+        html.P(
+            f"As demais {len(sub) - len(sim)} submarcas classificadas (de {len(sub)} no total) são "
+            "\"Não\" Body Splash.",
+            style={"color": "#888", "fontSize": "13px", "marginTop": "4px"},
+        ),
+    ])
+
+
 _CONSIDERATIONS_STYLE = {
     "fontFamily": "'Roboto', -apple-system, Helvetica, Arial, sans-serif",
     "maxWidth": "900px", "margin": "0 auto", "padding": "24px",
@@ -1358,11 +1431,35 @@ def _considerations_layout():
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
             ),
             _considerations_reclass_table(),
+            html.H4("Body Splash", style={"marginTop": "28px"}),
+            html.P(
+                "Classificação manual (ver fonte/body_splash.xlsx) de quais "
+                "submarcas são consideradas Body Splash — usada pelo filtro "
+                "IsBodySplash e pela quebra \"Body Splash\" (só confiável a "
+                "partir do nível Submarca).",
+                style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
+            ),
+            _considerations_body_splash_table(),
+            html.H4("Excluídos do ranking (top N)", style={"marginTop": "28px"}),
+            html.P(
+                "Buckets residuais (nunca uma entidade de verdade daquele "
+                "nível) não concorrem por uma vaga no top 10/20/30 das "
+                "quebras por Marca, Submarca e Variante:",
+                style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
+            ),
+            html.Ul(
+                style={"marginTop": "4px"},
+                children=[
+                    html.Li(name, style={"marginBottom": "4px"})
+                    for name in sorted(_EXCLUDE_FROM_RANKING | EXCLUDE_NAMES_FROM_RANKING)
+                ],
+            ),
             html.H4("Selecionáveis em níveis extras", style={"marginTop": "28px"}),
             html.P(
                 "Marcas/fabricantes sem detalhamento na planilha (não têm "
                 "submarca/variante) que passaram a também aparecer nos "
-                "dropdowns de filtro nesses níveis mais fundos.",
+                "dropdowns de filtro nesses níveis mais fundos — e só até "
+                "eles, não aparecem em nenhum nível além do listado.",
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5"},
             ),
             _considerations_extend_list(),
