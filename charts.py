@@ -318,6 +318,15 @@ def alluvial_stack_chart(
 
     x_positions = list(range(len(years)))
     fig = go.Figure()
+    # rotulos acumulados num unico fig.update_layout(annotations=...) no
+    # final, em vez de fig.add_annotation() por rotulo: cada add_annotation
+    # dispara a validacao/coercao completa do Plotly (add_annotation ->
+    # _add_annotation_like -> _set_array_prop -> Annotation.__init__ ->
+    # validate_coerce), que profilou como o maior custo de tempo do app
+    # (~2s de ~4.7s em _build_blocks pra uma quebra por Marca) - batchando
+    # tudo numa lista e setando de uma vez so, essa validacao roda uma
+    # unica vez pro array inteiro
+    annotations: list[dict] = []
 
     # pequena sobreposicao entre faixas adjacentes: sem isso, dois
     # poligonos preenchidos que apenas encostam (sem sobrepor) deixam uma
@@ -390,7 +399,7 @@ def alluvial_stack_chart(
             show_share = not is_percent and share_totals.get(yr) and ratio >= 0.08
             share_text = f"{values[cat][yr] / share_totals[yr] * 100:.1f}%" if show_share else ""
             label = value_text if not share_text else f"{value_text}<br>{share_text}"
-            fig.add_annotation(
+            annotations.append(dict(
                 x=i,
                 y=mid,
                 text=label,
@@ -398,7 +407,7 @@ def alluvial_stack_chart(
                 xanchor="center",
                 font=dict(color=contrast_text_color(color_fn(cat)), size=13 if ratio >= 0.08 else 10),
                 align="center",
-            )
+            ))
 
     # rotulo do total no topo de cada coluna + variacao % do total ano a
     # ano (chave/bracket) - so fazem sentido quando as categorias somam o
@@ -410,14 +419,14 @@ def alluvial_stack_chart(
     if show_total:
         for i, yr in enumerate(years):
             top_text = f"<b>{coverage_pct[yr]:.1f}%</b>" if coverage_pct else f"<b>{totals[yr]:,.{value_decimals}f}</b>"
-            fig.add_annotation(
+            annotations.append(dict(
                 x=i,
                 y=totals[yr] + max_total * 0.04,
                 text=top_text,
                 showarrow=False,
                 xanchor="center",
                 font=dict(color="#222222", size=17),
-            )
+            ))
 
         # variacao % do total, ano a ano: "chave" retangular (bracket) numa
         # fileira fixa acima das colunas - sobe reto a partir do topo da
@@ -469,7 +478,7 @@ def alluvial_stack_chart(
                         showlegend=False,
                     )
                 )
-                fig.add_annotation(
+                annotations.append(dict(
                     x=x_mid,
                     y=pill_y,
                     text=change_text,
@@ -479,7 +488,7 @@ def alluvial_stack_chart(
                     borderpad=7,
                     bgcolor=style["bg"],
                     font=dict(color=style["text"], size=11),
-                )
+                ))
     else:
         pill_y = max_total * 1.08
 
@@ -505,14 +514,14 @@ def alluvial_stack_chart(
                 showlegend=False,
             )
         )
-        fig.add_annotation(
+        annotations.append(dict(
             x=label_x,
             y=mid,
             text=cat,
             showarrow=False,
             xanchor="left",
             font=dict(color=label_color, size=11),
-        )
+        ))
 
     header = title if not subtitle else f"{title}<br><span style='font-size:13px;color:#666'>{subtitle}</span>"
     fig.update_layout(
@@ -523,6 +532,7 @@ def alluvial_stack_chart(
         plot_bgcolor="white",
         paper_bgcolor="white",
         margin=dict(l=10, r=110, t=90, b=50),
+        annotations=annotations,
         xaxis=dict(
             tickmode="array",
             tickvals=x_positions,
@@ -570,6 +580,7 @@ def line_evolution_chart(
 
     x_positions = list(range(len(years)))
     fig = go.Figure()
+    annotations: list[dict] = []  # ver comentario em alluvial_stack_chart
 
     # linha suavizada (spline) com marcador pequeno de preenchimento
     # branco e borda na cor da categoria - sem rotulo de valor por ponto
@@ -591,7 +602,7 @@ def line_evolution_chart(
                 showlegend=False,
             )
         )
-        fig.add_annotation(
+        annotations.append(dict(
             x=x_positions[-1],
             xshift=8,
             y=y_values[-1],
@@ -599,7 +610,7 @@ def line_evolution_chart(
             showarrow=False,
             xanchor="left",
             font=dict(color=color, size=11),
-        )
+        ))
 
     if weighted_average is not None:
         avg_color = "#666666"
@@ -627,7 +638,7 @@ def line_evolution_chart(
                 if change_pct is not None
                 else f"{weighted_average_label} ({value_text})"
             )
-            fig.add_annotation(
+            annotations.append(dict(
                 x=x_positions[-1],
                 xshift=8,
                 y=y_values[-1],
@@ -635,7 +646,7 @@ def line_evolution_chart(
                 showarrow=False,
                 xanchor="left",
                 font=dict(color=avg_color, size=12),
-            )
+            ))
 
     subtitle_full = f"{subtitle} ({metric_label})" if subtitle and metric_label else subtitle or metric_label
     header = title if not subtitle_full else f"{title}<br><span style='font-size:13px;color:#666'>{subtitle_full}</span>"
@@ -650,6 +661,7 @@ def line_evolution_chart(
         # ponderada inclui o valor ("Media ponderada (2,095.1)"), bem mais
         # largo que um nome de categoria sozinho
         margin=dict(l=60, r=185, t=90, b=50),
+        annotations=annotations,
         xaxis=dict(
             tickmode="array",
             tickvals=x_positions,
@@ -777,6 +789,7 @@ def price_unit_waterfall_chart(
     x_positions = list(range(len(x_ticktext)))
 
     fig = go.Figure()
+    annotations: list[dict] = []  # ver comentario em alluvial_stack_chart
     fig.add_trace(
         go.Waterfall(
             x=x_positions,
@@ -828,7 +841,7 @@ def price_unit_waterfall_chart(
                 showlegend=False,
             )
         )
-        fig.add_annotation(
+        annotations.append(dict(
             x=x_mid,
             y=pill_y,
             text=f"<b>{pct:+.1f}%</b>",
@@ -838,7 +851,7 @@ def price_unit_waterfall_chart(
             borderpad=7,
             bgcolor=style["bg"],
             font=dict(color=style["text"], size=11),
-        )
+        ))
 
     # CAGR do periodo inteiro (primeiro -> ultimo ano), canto superior
     # direito - igual a referencia do usuario
@@ -846,7 +859,7 @@ def price_unit_waterfall_chart(
     n_periods = len(years) - 1
     cagr = (last_val / first_val) ** (1 / n_periods) - 1 if first_val and n_periods else None
     if cagr is not None:
-        fig.add_annotation(
+        annotations.append(dict(
             x=1.0, xref="paper", y=1.14, yref="paper",
             text=f"CAGR = {cagr * 100:+.1f}%",
             showarrow=False,
@@ -854,7 +867,7 @@ def price_unit_waterfall_chart(
             bordercolor="#888", borderwidth=1, borderpad=5,
             bgcolor="white",
             font=dict(color="#333", size=11),
-        )
+        ))
 
     header = title if not unit_label else f"{title}<br><span style='font-size:13px;color:#666'>{unit_label}</span>"
     fig.update_layout(
@@ -865,6 +878,7 @@ def price_unit_waterfall_chart(
         plot_bgcolor="white",
         paper_bgcolor="white",
         margin=dict(l=50, r=30, t=90, b=40),
+        annotations=annotations,
         xaxis=dict(
             tickmode="array",
             tickvals=x_positions,
@@ -943,6 +957,7 @@ def unit_additions_bridge_chart(
     x_positions = list(range(len(x_ticktext)))
 
     fig = go.Figure()
+    annotations: list[dict] = []  # ver comentario em alluvial_stack_chart
     fig.add_trace(
         go.Waterfall(
             x=x_positions,
@@ -1037,14 +1052,14 @@ def unit_additions_bridge_chart(
                 showlegend=False,
             )
         )
-        fig.add_annotation(
+        annotations.append(dict(
             x=x_mid, y=pill_y,
             text=f"<b>{pct:+.1f}%</b>",
             showarrow=False,
             bordercolor=style["line"], borderwidth=1, borderpad=7,
             bgcolor=style["bg"],
             font=dict(color=style["text"], size=11),
-        )
+        ))
 
     n_positions = len(x_positions)
     # piso alto o bastante pra preencher o container disponivel (o painel
@@ -1065,6 +1080,7 @@ def unit_additions_bridge_chart(
         plot_bgcolor="white",
         paper_bgcolor="white",
         margin=margin,
+        annotations=annotations,
         xaxis=dict(
             tickmode="array",
             tickvals=x_positions,

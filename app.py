@@ -243,14 +243,36 @@ app = Dash(__name__)
 app.title = "Worldpanel Dashboard"
 
 
+# _scope/_cod_children sao o par mais chamado de toda a navegacao por
+# Cod. (todo build_selection/_descend_to_level passa por eles, muitas
+# vezes por callback - um por indicador, ver INDICATOR_BLOCKS) e `df`
+# nunca muda em runtime (carregado uma unica vez no import, ver
+# `build_dataset()` acima), entao o resultado de cada um e sempre o
+# mesmo pra uma combinacao de argumentos - seguro cachear pra sempre,
+# sem invalidacao. Perfilando uma troca de "Quebra por Marca", isso e
+# que dominava o tempo do callback (~1.5s de ~4.7s, batendo o mesmo
+# subconjunto de linhas do zero uma vez por indicador).
+_scope_cache: dict[tuple[tuple[str, str], ...], "pd.DataFrame"] = {}
+_cod_children_cache: dict[tuple[int, str], "pd.DataFrame"] = {}
+
+
 def _scope(base_filters):
     """Aplica `base_filters` (regiao/segmento, tipicamente) uma unica vez
     sobre `df` - usado como ponto de partida tanto por buscas de um nivel
     so quanto pela descida recursiva de `_descend_to_level`, que reusa o
-    mesmo subset em vez de refiltrar regiao/segmento a cada passo."""
+    mesmo subset em vez de refiltrar regiao/segmento a cada passo.
+    Cacheado por combinacao de filtros (ver `_scope_cache` acima) -
+    devolve sempre o MESMO objeto DataFrame pra argumentos iguais, o que
+    tambem estabiliza `id(scoped_df)` entre chamadas pra `_cod_children`
+    reaproveitar seu proprio cache."""
+    key = tuple(sorted(base_filters.items()))
+    cached = _scope_cache.get(key)
+    if cached is not None:
+        return cached
     subset = df
     for col, val in base_filters.items():
         subset = subset[subset[col] == val]
+    _scope_cache[key] = subset
     return subset
 
 
@@ -268,9 +290,20 @@ def _cod_children(scoped_df, parent_cod):
     direto contava esses residuais (e ate fabricantes aninhados, como
     "O. U. I" dentro de Boticario) mais de uma vez. Filtrando por Cod.
     cada valor e contado exatamente uma vez, na profundidade certa,
-    seja qual for o rotulo de classificacao da linha."""
+    seja qual for o rotulo de classificacao da linha.
+
+    Cacheado por (id(scoped_df), parent_cod) - seguro porque `scoped_df`
+    so vem de `_scope`, que mantem uma referencia permanente (o id nunca
+    e reciclado pro tempo de vida do processo) e sempre devolve o mesmo
+    objeto pra um `base_filters` ja visto."""
+    key = (id(scoped_df), parent_cod)
+    cached = _cod_children_cache.get(key)
+    if cached is not None:
+        return cached
     pattern = re.compile(rf"^{re.escape(parent_cod)}\.\d+$")
-    return scoped_df[scoped_df["cod"].str.match(pattern)]
+    result = scoped_df[scoped_df["cod"].str.match(pattern)]
+    _cod_children_cache[key] = result
+    return result
 
 
 def _children_rows(base_filters, parent_cod):
