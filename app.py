@@ -1345,23 +1345,24 @@ def _considerations_body_splash_table():
     fonte/body_splash.xlsx) - so linhas de Submarca de verdade tem essa
     classificacao confiavel (ver BODY_SPLASH_BREAKDOWNS/comentario em
     update_filters_disabled), por isso a tabela filtra so classificacao
-    == "Sub Marca". Ordenada com "Sim" primeiro pra ressaltar quais
-    submarcas sao Body Splash - a maioria e "Não" (nao listada linha a
-    linha, so contada no resumo), senao a tabela ficaria enorme."""
+    == "Sub Marca". Lista as 115 submarcas classificadas por inteiro,
+    "Sim" primeiro (destacado em verde) pra ressaltar quais sao Body
+    Splash - so 10 das 115, a maioria e "Não"."""
     sub = df.loc[df["classificacao"] == "Sub Marca", ["marca", "rotulo", "is_body_splash"]].drop_duplicates()
-    sim = sub[sub["is_body_splash"] == "Sim"].sort_values(["marca", "rotulo"])
-    if sim.empty:
-        return html.P("Nenhuma submarca classificada como Body Splash.", style={"color": "#666"})
+    if sub.empty:
+        return html.P("Nenhuma submarca classificada.", style={"color": "#666"})
+    ordered = sub.sort_values(["is_body_splash", "marca", "rotulo"], ascending=[False, True, True])
+    n_sim = (sub["is_body_splash"] == "Sim").sum()
     rows = [
         html.Tr([
             html.Td(marca, style=_CONS_TD_STYLE),
             html.Td(rotulo, style=_CONS_TD_STYLE),
             html.Td(
-                "Sim",
-                style={**_CONS_TD_STYLE, "fontWeight": "600", "color": "#1E8E5A"},
+                is_bs,
+                style={**_CONS_TD_STYLE, "fontWeight": "600", "color": "#1E8E5A"} if is_bs == "Sim" else _CONS_TD_STYLE,
             ),
         ])
-        for marca, rotulo, _ in sim.itertuples(index=False)
+        for marca, rotulo, is_bs in ordered.itertuples(index=False)
     ]
     return html.Div([
         html.Table(
@@ -1376,8 +1377,7 @@ def _considerations_body_splash_table():
             ],
         ),
         html.P(
-            f"As demais {len(sub) - len(sim)} submarcas classificadas (de {len(sub)} no total) são "
-            "\"Não\" Body Splash.",
+            f"{n_sim} de {len(sub)} submarcas classificadas são Body Splash.",
             style={"color": "#888", "fontSize": "13px", "marginTop": "4px"},
         ),
     ])
@@ -1431,15 +1431,6 @@ def _considerations_layout():
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
             ),
             _considerations_reclass_table(),
-            html.H4("Body Splash", style={"marginTop": "28px"}),
-            html.P(
-                "Classificação manual (ver fonte/body_splash.xlsx) de quais "
-                "submarcas são consideradas Body Splash — usada pelo filtro "
-                "IsBodySplash e pela quebra \"Body Splash\" (só confiável a "
-                "partir do nível Submarca).",
-                style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
-            ),
-            _considerations_body_splash_table(),
             html.H4("Excluídos do ranking (top N)", style={"marginTop": "28px"}),
             html.P(
                 "Buckets residuais (nunca uma entidade de verdade daquele "
@@ -1454,6 +1445,15 @@ def _considerations_layout():
                     for name in sorted(_EXCLUDE_FROM_RANKING | EXCLUDE_NAMES_FROM_RANKING)
                 ],
             ),
+            html.H4("Body Splash", style={"marginTop": "28px"}),
+            html.P(
+                "Classificação manual (ver fonte/body_splash.xlsx) de quais "
+                "submarcas são consideradas Body Splash — usada pelo filtro "
+                "IsBodySplash e pela quebra \"Body Splash\" (só confiável a "
+                "partir do nível Submarca).",
+                style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
+            ),
+            _considerations_body_splash_table(),
             html.H4("Selecionáveis em níveis extras", style={"marginTop": "28px"}),
             html.P(
                 "Marcas/fabricantes sem detalhamento na planilha (não têm "
