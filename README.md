@@ -128,6 +128,13 @@ Abre em `http://127.0.0.1:8050/`.
   marcado (padrão), soma um bloco sintético com o resto do ranking e
   fecha o total real; desmarcado, mostra só o top N filtrado e cai no
   mesmo `coverage_pct` usado por Marca/Submarca/Variante.
+  - **Fabricante ≠ Marca de mesmo nome** — um Fabricante costuma ser um
+    grupo corporativo dono de várias Marcas, nem sempre só a de nome
+    igual ao dele. Ex.: Fabricante "Boticário" soma 3 Marcas (Boticário,
+    Eudora, Quem Disse Berenice) — o total de Fabricante=Boticário é
+    maior que o de Marca=Boticário sozinha (a diferença é exatamente
+    Eudora + Quem Disse Berenice). Confirmado com o usuário: não é bug,
+    a soma das Marcas do Fabricante bate exatamente com o total dele.
   - **Body Splash** (quebra) — 2 categorias fixas, "Body Splash" e "Não
     Body Splash", que sempre somam 100% do indicador no filtro atual
     (sem ranking/top N, já que só há 2 categorias) — compara o
