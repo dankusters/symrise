@@ -693,15 +693,25 @@ def _self_cod(regiao_view, segmento_f, classificacao, fabricante=None, marca=Non
     `df` pelo nome (coluna "marca", que pra essas entidades e a mesma
     em qualquer papel) na MESMA regiao/segmento pedidos, sem exigir
     `classificacao`, entao funciona em qualquer combinacao onde esse
-    nome tiver uma linha - nao so no exemplo da planilha de excecoes."""
+    nome tiver uma linha - nao so no exemplo da planilha de excecoes.
+
+    "Total" (o placeholder de filtro nao fixado) conta como None em
+    fabricante/marca/rotulo, nunca como valor literal pra filtrar -
+    um chamador pode pedir Marca="Boticario" com Fabricante ainda em
+    "Total" (o usuario pulou direto pro dropdown de Marca sem passar
+    pelo de Fabricante primeiro, ver update_marca_options), e a propria
+    linha de Boticario tem fabricante="Boticario" (nunca "Total") -
+    exigir a igualdade literal aqui so faria a busca falhar sempre
+    nesse caso (ver conversa com o usuario, print de quebra por
+    Segmento com Marca=Boticario zerada)."""
     subset = df[
         (df["regiao"] == regiao_view) & (df["segmento"] == segmento_f) & (df["classificacao"] == classificacao)
     ]
-    if fabricante is not None:
+    if fabricante is not None and fabricante != "Total":
         subset = subset[subset["fabricante"] == fabricante]
-    if marca is not None:
+    if marca is not None and marca != "Total":
         subset = subset[subset["marca"] == marca]
-    if rotulo is not None:
+    if rotulo is not None and rotulo != "Total":
         subset = subset[subset["rotulo"] == rotulo]
     if not subset.empty:
         return subset["cod"].iloc[0]
@@ -793,10 +803,18 @@ def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
             # marca_f, que podem ainda estar em "Total" se o usuario
             # pulou direto pro dropdown mais fundo, ver update_*_options)
             return {"classificacao": extended[0], "marca": value}
-        return {"classificacao": default, "fabricante": fabricante_f, "marca": marca_f, "rotulo": value}
+        filters = {"classificacao": default, "rotulo": value}
+        if fabricante_f and fabricante_f != "Total":
+            filters["fabricante"] = fabricante_f
+        if marca_f and marca_f != "Total":
+            filters["marca"] = marca_f
+        return filters
     if marca_f and marca_f != "Total":
         classificacao = _native_classificacao(marca_f, "Marca")
-        return {"classificacao": classificacao, "fabricante": fabricante_f, "marca": marca_f}
+        filters = {"classificacao": classificacao, "marca": marca_f}
+        if fabricante_f and fabricante_f != "Total":
+            filters["fabricante"] = fabricante_f
+        return filters
     if fabricante_f and fabricante_f != "Total":
         return {"classificacao": "Fabricante", "fabricante": fabricante_f}
     return {"classificacao": "Total", "fabricante": "Total", "marca": "Total", "cod": "1"}
