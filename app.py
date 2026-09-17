@@ -1312,6 +1312,7 @@ def _considerations_reclass_table():
                 html.Th("Cód.", style=_CONS_TH_STYLE),
                 html.Th("De", style=_CONS_TH_STYLE),
                 html.Th("Para", style=_CONS_TH_STYLE),
+                html.Th("Ignorado?", style=_CONS_TH_STYLE),
             ])),
             html.Tbody([
                 html.Tr([
@@ -1319,6 +1320,11 @@ def _considerations_reclass_table():
                     html.Td(change["cod"], style={**_CONS_TD_STYLE, "color": "#888", "fontFamily": "monospace"}),
                     html.Td(change["de"], style=_CONS_TD_STYLE),
                     html.Td(f"→ {change['para']}", style={**_CONS_TD_STYLE, "fontWeight": "600"}),
+                    html.Td(
+                        "Sim — nunca vira categoria própria" if change["cod"] in IGNORE_CODS else "—",
+                        style={**_CONS_TD_STYLE, "color": "#C23B3B", "fontWeight": "600"} if change["cod"] in IGNORE_CODS
+                        else {**_CONS_TD_STYLE, "color": "#bbb"},
+                    ),
                 ])
                 for change in CATEGORY_CHANGES
             ]),
@@ -1424,10 +1430,11 @@ def _considerations_layout():
             html.H4("Reclassificações"),
             html.P(
                 "O Cód. (posição na árvore) não muda — só o nível considerado "
-                "na quebra/gráfico. Um produto reclassificado para o mesmo "
-                "nível do seu pai direto na árvore deixa de aparecer como "
-                "categoria própria e seus filhos passam a aparecer um nível "
-                "acima (ex.: família Ekos, dentro de Natura).",
+                "na quebra/gráfico. Um produto marcado como \"Ignorado\" (ex.: "
+                "Ekos-Cf, T. Egeo Choc-Cf) nunca aparece como categoria "
+                "própria em nenhuma quebra — seus filhos passam a aparecer "
+                "um nível acima, direto dentro do pai dele (ex.: família "
+                "Ekos, dentro de Natura).",
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
             ),
             _considerations_reclass_table(),
