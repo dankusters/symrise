@@ -169,7 +169,7 @@ Abre em `http://127.0.0.1:8050/`.
 - **`export_pptx.py`** — exporta qualquer bloco (gráfico + tabela) ou a
   aba Price/Unit pra PowerPoint, com os MESMOS números da tela
   (reaproveita `compute_variations`/os `dict`s de valores já
-  calculados). Logo Symrise + "Worldpanel Dashboard" no canto superior
+  calculados). Logo Symrise + "Kantar Worldpanel - Dashboard" no canto superior
   esquerdo e rodapé com a fonte dos dados em todo slide; fonte Roboto
   Condensed; tabela com "scale to fit" (encolhe fonte/margem pra caber
   num único slide, com piso legível — o que não couber nem assim

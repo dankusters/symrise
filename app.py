@@ -292,7 +292,7 @@ FABRICANTE_TOP_N_DEFAULT = _TOP_N
 RANKED_BREAKDOWNS = TOP_N_BREAKDOWNS + ("fabricante",)
 
 app = Dash(__name__)
-app.title = "Worldpanel Dashboard"
+app.title = "Kantar Worldpanel - Dashboard"
 
 
 # _scope/_cod_children sao o par mais chamado de toda a navegacao por
@@ -1486,7 +1486,7 @@ app.layout = html.Div(
             style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "8px"},
             children=[
                 html.Img(src=app.get_asset_url("symrise_logo.png"), style={"height": "30px"}),
-                html.H2("Worldpanel Dashboard", style={"margin": 0, "flex": "1"}),
+                html.H2("Kantar Worldpanel - Dashboard", style={"margin": 0, "flex": "1"}),
                 html.Button(
                     "Considerações",
                     id="considerations-open-btn",

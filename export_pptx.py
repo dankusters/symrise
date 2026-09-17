@@ -45,7 +45,7 @@ _LOGO_HEIGHT = Inches(0.28)
 _LOGO_ASPECT = 1567 / 371  # dimensoes reais (px) de symrise_logo.png
 _LOGO_WIDTH = Emu(int(_LOGO_HEIGHT * _LOGO_ASPECT))
 _LOGO_GAP = Inches(0.1)
-_TITLE_TEXT = "Worldpanel Dashboard"
+_TITLE_TEXT = "Kantar Worldpanel - Dashboard"
 _TITLE_GAP = Inches(0.12)  # espaco entre o logo e o titulo, na horizontal
 # topo do conteudo (grafico/tabela) de todo slide - desce um pouco pra
 # abrir espaco pro logo, sem sobrepor
