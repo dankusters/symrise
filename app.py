@@ -932,8 +932,18 @@ def build_selection(
         # ja desabilita "Quebra por") - a quebra e sempre a propria
         # regiao - mas os demais filtros continuam livres (ver
         # update_filters_disabled), restringindo o escopo em cada
-        # regiao antes de quebrar (ver _regiao_root_values)
-        crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
+        # regiao antes de quebrar (ver _regiao_root_values). NAO usa
+        # `_breadcrumb` (que omite Segmento de proposito - nas demais
+        # views ele e sempre um efeito colateral da quebra, ver
+        # SEGMENT_REQUIRED_BREAKDOWNS) porque aqui Segmento e um filtro
+        # livre igual aos outros, entao precisa aparecer no titulo pra
+        # nao parecer que o filtro nao foi aplicado (ver conversa com o
+        # usuario - "Regiões > Feminino" sumindo do titulo).
+        crumb_parts = [REGIOES_TAB_KEY]
+        for value in (segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
+            if value and value != "Total":
+                crumb_parts.append(value)
+        crumb = " > ".join(crumb_parts)
         values = _regiao_root_values(
             indicator_id, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, body_splash_f,
         )
