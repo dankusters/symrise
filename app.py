@@ -16,6 +16,7 @@ import re
 
 from dash import Dash, Input, Output, State, ctx, dcc, html
 
+from auth import init_auth
 from charts import (
     YEARS_DEFAULT,
     alluvial_stack_chart,
@@ -292,8 +293,12 @@ FABRICANTE_TOP_N_DEFAULT = _TOP_N
 # quebras cujo seletor de ranking (top-n-container) aparece na UI
 RANKED_BREAKDOWNS = TOP_N_BREAKDOWNS + ("fabricante",)
 
-app = Dash(__name__, url_base_pathname=os.environ.get("DASH_URL_BASE_PATHNAME", "/"))
+_URL_BASE_PATHNAME = os.environ.get("DASH_URL_BASE_PATHNAME", "/")
+
+app = Dash(__name__, url_base_pathname=_URL_BASE_PATHNAME)
 app.title = "Kantar Worldpanel - Dashboard"
+
+init_auth(app.server, _URL_BASE_PATHNAME)
 
 
 # _scope/_cod_children sao o par mais chamado de toda a navegacao por
