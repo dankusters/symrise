@@ -25,7 +25,7 @@ from charts import (
     unit_additions_bridge_chart,
 )
 from etl import build_dataset, load_category_exceptions
-from export_pptx import TABLE_LEGEND_NO_SHARE, TABLE_LEGEND_WITH_SHARE, build_price_unit_pptx, build_pptx
+from export_pptx import TABLE_LEGEND_NO_SHARE, TABLE_LEGEND_WITH_SHARE, build_additions_pptx, build_price_unit_pptx, build_pptx
 from insights import generate_insight, generate_price_unit_insight, generate_unit_additions_insight
 
 df = build_dataset()
@@ -1253,6 +1253,13 @@ def _additions_panel(cfg):
     grafico ja precisa de toda a largura disponivel."""
     return [
         html.Div(
+            style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "12px"},
+            children=[
+                _pptx_button(f"export-btn-{cfg['key']}"),
+                dcc.Download(id=f"download-{cfg['key']}"),
+            ],
+        ),
+        html.Div(
             style={"overflowX": "auto", "marginBottom": "24px"},
             children=[
                 dcc.Graph(
@@ -2371,7 +2378,10 @@ def export_price_unit(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f
 def _additions_tab_result(cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value):
     """Logica compartilhada de todas as abas "Adicoes de X" (ver
     ADDITIONS_TABS) - so o `cfg` (indicador/rotulos daquela aba) muda
-    entre elas, ver _register_additions_callback."""
+    entre elas, ver _register_additions_callback. Retorna tambem
+    `names`/`deltas`/`indicator_cfg` (alem de fig/table/insight, usados
+    pela tela) pra exportacao PowerPoint (ver export_additions) montar o
+    PPTX com exatamente os mesmos numeros, sem recalcular."""
     names, deltas, totals, title = _build_additions_bridge(
         cfg["indicator"], breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f,
         fabricante_outros="incluir" in (fabricante_outros_value or []),
@@ -2392,15 +2402,16 @@ def _additions_tab_result(cfg, breakdown, regiao_view, segmento_f, fabricante_f,
         names, deltas, totals, ADDITIONS_YEAR0, ADDITIONS_YEAR1,
         unit_label=indicator_cfg["unit_label"], indicator_label=cfg["insight_label"],
     )
-    return fig, table, insight
+    return fig, table, insight, names, deltas, indicator_cfg
 
 
 def _register_additions_callback(cfg):
-    """Registra o callback de uma aba "Adicoes de X" (ver ADDITIONS_TABS).
-    Fabrica separada (em vez de um loop com `@app.callback` direto) pra
-    `cfg` ficar preso por valor a cada callback via default de parametro,
-    nao por referencia a variavel de loop (que apontaria pra ultima
-    entrada de ADDITIONS_TABS em todas as chamadas)."""
+    """Registra os callbacks (tela + exportar PowerPoint) de uma aba
+    "Adicoes de X" (ver ADDITIONS_TABS). Fabrica separada (em vez de um
+    loop com `@app.callback` direto) pra `cfg` ficar preso por valor a
+    cada callback via default de parametro, nao por referencia a
+    variavel de loop (que apontaria pra ultima entrada de ADDITIONS_TABS
+    em todas as chamadas)."""
 
     @app.callback(
         Output(cfg["graph_id"], "figure"),
@@ -2419,9 +2430,36 @@ def _register_additions_callback(cfg):
         Input("fabricante-outros-checkbox", "value"),
     )
     def update_additions(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value, cfg=cfg):
-        return _additions_tab_result(
+        fig, table, insight, _names, _deltas, _indicator_cfg = _additions_tab_result(
             cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value,
         )
+        return fig, table, insight
+
+    @app.callback(
+        Output(f"download-{cfg['key']}", "data"),
+        Input(f"export-btn-{cfg['key']}", "n_clicks"),
+        State("dimension-dropdown", "value"),
+        State("regiao-tabs", "value"),
+        State("segmento-filter", "value"),
+        State("fabricante-filter", "value"),
+        State("marca-filter", "value"),
+        State("submarca-filter", "value"),
+        State("variante-filter", "value"),
+        State("subvariante-filter", "value"),
+        State("top-n-selector", "value"),
+        State("body-splash-filter", "value"),
+        State("fabricante-outros-checkbox", "value"),
+        prevent_initial_call=True,
+    )
+    def export_additions(n_clicks, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value, cfg=cfg):
+        fig, _table, insight, names, deltas, indicator_cfg = _additions_tab_result(
+            cfg, breakdown, regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, top_n, body_splash_f, fabricante_outros_value,
+        )
+        pptx_bytes = build_additions_pptx(
+            fig, names, deltas, indicator_cfg["value_decimals"], ADDITIONS_YEAR0, ADDITIONS_YEAR1, highlight_text=insight,
+        )
+        filename = f"{cfg['tab_label'].replace(' ', '_').replace('→', '-')}.pptx"
+        return dcc.send_bytes(pptx_bytes, filename)
 
 
 for _additions_cfg in ADDITIONS_TABS:

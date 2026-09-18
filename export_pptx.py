@@ -539,3 +539,128 @@ def build_price_unit_pptx(charts: list[tuple[go.Figure, str]]) -> bytes:
     buf = BytesIO()
     prs.save(buf)
     return buf.getvalue()
+
+
+def _fill_additions_table(table, header, rows_data, value_decimals, header_size, body_size):
+    """Preenche a tabela de uma aba "Adicoes de X": 2 colunas (Categoria,
+    UMA variacao) - mais simples que `_fill_table`/`_fill_variation_cell`
+    (sem % nem participacao, ver `app._additions_cell`), entao nao da pra
+    reaproveitar aquelas - so o valor com sinal, colorido verde/vermelho/
+    cinza (zero), igual a celula da tela."""
+    for j, text in enumerate(header):
+        cell = table.cell(0, j)
+        cell.text = text
+        run = cell.text_frame.paragraphs[0].runs[0]
+        run.font.name = _FONT_NAME
+        run.font.bold = True
+        run.font.size = header_size
+        run.font.color.rgb = _HEADER_RGB
+
+    for i, (name, delta) in enumerate(rows_data, start=1):
+        name_cell = table.cell(i, 0)
+        name_cell.text = name
+        name_cell.text_frame.word_wrap = True
+        name_run = name_cell.text_frame.paragraphs[0].runs[0]
+        name_run.font.name = _FONT_NAME
+        name_run.font.bold = True
+        name_run.font.size = body_size
+
+        color = _NOMINAL_RGB if delta == 0 else (_POSITIVE_RGB if delta >= 0 else _NEGATIVE_RGB)
+        text = f"{delta:,.{value_decimals}f}" if delta == 0 else f"{delta:+,.{value_decimals}f}"
+        delta_cell = table.cell(i, 1)
+        delta_cell.text = text
+        delta_run = delta_cell.text_frame.paragraphs[0].runs[0]
+        delta_run.font.name = _FONT_NAME
+        delta_run.font.color.rgb = color
+        delta_run.font.size = body_size
+
+
+def build_additions_pptx(
+    fig: go.Figure,
+    names: list[str],
+    deltas: dict[str, float],
+    value_decimals: int,
+    year0: str,
+    year1: str,
+    highlight_text: str | None = None,
+) -> bytes:
+    """Exportacao de uma aba "Adicoes de X" (ver app.ADDITIONS_TABS): 1
+    slide, grafico (bridge/waterfall) a esquerda + tabela simples
+    (Categoria + UMA coluna com a variacao {year0}->{year1}, mesmos
+    numeros de `app._additions_table`) a direita + Highlights embaixo -
+    mesmo layout de `build_pptx`, so com uma tabela mais simples (sem %
+    de participacao, que a tabela da tela tambem nao tem pra essa aba).
+    O grafico pode crescer bem largo na tela (ate 30+ categorias, sem
+    responsividade - ver charts.unit_additions_bridge_chart), mas aqui
+    e sempre renderizado nos mesmos 760px de largura dos demais
+    graficos exportados (mesma logica de `build_pptx`/
+    `build_price_unit_pptx`) - senao a proporcao do PNG nao bateria com
+    as margens calibradas do grafico."""
+    prs = Presentation()
+    prs.slide_width = _SLIDE_WIDTH
+    prs.slide_height = _SLIDE_HEIGHT
+
+    img_w_px = 760
+    img_h_px = int(fig.layout.height or 520)
+    img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
+
+    header = ["Categoria", f"{year0[1:]}→{year1[1:]}"]
+    rows_data = [(name, deltas[name]) for name in names]
+
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_logo(slide)
+    _add_footer(slide)
+
+    chart_area_width, full_area_height = _chart_area_size()
+    if highlight_text:
+        area_height = Emu(int(full_area_height - _HIGHLIGHT_BLOCK_HEIGHT - _HIGHLIGHT_GAP))
+    else:
+        area_height = full_area_height
+
+    left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _CONTENT_TOP, chart_area_width, area_height)
+    slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
+
+    table_left = _MARGIN + chart_area_width + _GAP
+    table_width = _SLIDE_WIDTH - _MARGIN - table_left
+
+    header_font, body_font, margin_pt, rows_that_fit = _fit_table(
+        len(rows_data), area_height, False, _COMBO_HEADER_FONT_MAX, _COMBO_BODY_FONT_MAX,
+    )
+    shown_rows, overflow_rows = rows_data[:rows_that_fit], rows_data[rows_that_fit:]
+
+    n_rows = len(shown_rows) + 1
+    n_cols = 2
+    graphic_frame = slide.shapes.add_table(n_rows, n_cols, table_left, _CONTENT_TOP, table_width, area_height)
+    table = graphic_frame.table
+    _style_table_plain(table, n_rows, n_cols, margin_pt)
+    for i, col_width in enumerate(_col_widths(table_width, n_cols - 1, Inches(1.6))):
+        table.columns[i].width = col_width
+    _fill_additions_table(table, header, shown_rows, value_decimals, Pt(header_font), Pt(body_font))
+
+    if highlight_text:
+        text_top = Emu(int(_CONTENT_TOP + area_height + _HIGHLIGHT_GAP))
+        _add_highlight_textbox(slide, text_top, _HIGHLIGHT_BLOCK_HEIGHT, highlight_text)
+
+    # continuacao (mesmo esquema de build_pptx): so tabela, largura
+    # cheia, em loop ate esvaziar o que sobrou do top N
+    while overflow_rows:
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        _add_logo(slide)
+        _add_footer(slide)
+        full_width = _SLIDE_WIDTH - 2 * _MARGIN
+        full_height = Emu(int(_CONTENT_BOTTOM - _CONTENT_TOP))
+        header_font, body_font, margin_pt, rows_that_fit = _fit_table(
+            len(overflow_rows), full_height, False, _FULL_HEADER_FONT_MAX, _FULL_BODY_FONT_MAX,
+        )
+        shown_rows, overflow_rows = overflow_rows[:rows_that_fit], overflow_rows[rows_that_fit:]
+        n_rows = len(shown_rows) + 1
+        graphic_frame = slide.shapes.add_table(n_rows, n_cols, _MARGIN, _CONTENT_TOP, full_width, full_height)
+        table = graphic_frame.table
+        _style_table_plain(table, n_rows, n_cols, margin_pt)
+        for i, col_width in enumerate(_col_widths(full_width, n_cols - 1, Inches(2.8))):
+            table.columns[i].width = col_width
+        _fill_additions_table(table, header, shown_rows, value_decimals, Pt(header_font), Pt(body_font))
+
+    buf = BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
