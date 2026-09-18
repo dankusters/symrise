@@ -2467,5 +2467,7 @@ for _additions_cfg in ADDITIONS_TABS:
     _register_additions_callback(_additions_cfg)
 
 
+server = app.server  # WSGI entrypoint p/ producao (ex.: gunicorn app:server)
+
 if __name__ == "__main__":
     app.run(debug=True)
