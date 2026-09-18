@@ -1537,6 +1537,15 @@ app.layout = html.Div(
                         "border": "1px solid #ccc", "borderRadius": "4px", "background": "white", "color": "#333",
                     },
                 ),
+                html.A(
+                    "Sair",
+                    href=f"{_URL_BASE_PATHNAME.rstrip('/')}/logout",
+                    style={
+                        "fontSize": "13px", "padding": "6px 12px", "cursor": "pointer",
+                        "border": "1px solid #ccc", "borderRadius": "4px", "background": "white", "color": "#333",
+                        "textDecoration": "none",
+                    },
+                ),
             ],
         ),
         dcc.Tabs(
