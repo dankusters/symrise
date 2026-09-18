@@ -11,6 +11,7 @@ Rodar localmente:
 
 from __future__ import annotations
 
+import os
 import re
 
 from dash import Dash, Input, Output, State, ctx, dcc, html
@@ -291,7 +292,7 @@ FABRICANTE_TOP_N_DEFAULT = _TOP_N
 # quebras cujo seletor de ranking (top-n-container) aparece na UI
 RANKED_BREAKDOWNS = TOP_N_BREAKDOWNS + ("fabricante",)
 
-app = Dash(__name__)
+app = Dash(__name__, url_base_pathname=os.environ.get("DASH_URL_BASE_PATHNAME", "/"))
 app.title = "Kantar Worldpanel - Dashboard"
 
 

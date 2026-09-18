@@ -11,4 +11,5 @@ dependencies = [
     "kaleido>=0.2",
     "dash>=2.17",
     "python-pptx>=1.0.2",
+    "gunicorn>=23.0; sys_platform != 'win32'",
 ]
