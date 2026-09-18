@@ -182,6 +182,51 @@ Abre em `http://127.0.0.1:8050/`.
   num único slide, com piso legível — o que não couber nem assim
   transborda pra slide de continuação).
 
+## Deploy / Produção
+
+Em produção em `https://gettally.com.br/symrise/dashboard/` (VPS
+Ubuntu), atrás de login próprio (não é o pop-up nativo do navegador).
+
+- **Subpath** — `app.py` lê `DASH_URL_BASE_PATHNAME` (default `"/"`,
+  sem efeito no uso local) pra configurar o `url_base_pathname` do
+  Dash; em produção fica `/symrise/dashboard/`, casando com o
+  `location` do nginx que faz o proxy reverso.
+- **WSGI** — `server = app.server` (fim de `app.py`) é o entrypoint pro
+  gunicorn (`gunicorn app:server`); local continua rodando
+  `python app.py` (dev server do Dash) normalmente.
+- **Login** (`auth.py`) — sessão Flask (cookie assinado, 7 dias,
+  renovada a cada acesso, `Secure` só em produção), com tela de login
+  própria (mesma identidade visual do resto do app) em vez do HTTP
+  Basic Auth do navegador. Protege tudo sob `DASH_URL_BASE_PATHNAME`
+  via `before_request`, liberando só `/login` e os assets estáticos
+  (necessários pra a própria tela de login renderizar). Botão "Sair"
+  no cabeçalho chama `/logout`. Usuário/senha via
+  `DASH_AUTH_USERNAME`/`DASH_AUTH_PASSWORD` (env vars no servidor);
+  `SECRET_KEY` também via env var, pra sessões sobreviverem a um
+  restart do serviço.
+- **Servidor** — `systemd` (`symrise.service`) roda
+  `uv run gunicorn -b 127.0.0.1:8060 app:server`, reinicia sozinho se
+  cair; `nginx` faz o proxy reverso + TLS (Let's Encrypt via certbot,
+  renovação automática).
+- **Deploy automático** — todo push na `main` dispara
+  `.github/workflows/deploy.yml`: conecta no VPS via SSH (secrets
+  `VPS_HOST`/`VPS_DEPLOY_KEY`, cadastrados como *repository secrets* no
+  GitHub) e roda `/opt/symrise/deploy.sh` (`git pull` + `uv sync` +
+  `systemctl restart symrise`). A chave de deploy é restrita por
+  `command=` no `authorized_keys` do servidor — mesmo que vaze, só
+  consegue rodar esse script, nada mais.
+- **Exportação PowerPoint em produção** — depende do Kaleido conseguir
+  abrir um Chrome headless pra renderizar os gráficos em PNG. O
+  servidor precisa ter, além do Chrome do próprio Kaleido
+  (`uv run plotly_get_chrome`), as bibliotecas de sistema que ele
+  carrega em runtime (`libatk-1.0`, `libnss3`, `libgtk-3`, etc. —
+  pacotes padrão de Chrome headless no Ubuntu). Isso é infraestrutura
+  do servidor, não fica registrado no repo — se o VPS for recriado do
+  zero, esse passo precisa ser refeito manualmente.
+- **Credenciais do servidor** — acesso ao VPS é só por chave SSH
+  (sem senha); a senha de root original (usada uma única vez pra
+  instalar a chave) não é mais necessária no dia a dia.
+
 ## Status atual
 
 **Feito:**
@@ -197,7 +242,10 @@ Abre em `http://127.0.0.1:8050/`.
   parte, Body Splash (Body Splash vs. Não Body Splash, 2 categorias que
   fecham 100% do total, sem ranking)
 - Exportação PowerPoint (não PDF) com identidade visual Symrise, fiel
-  aos números da tela
+  aos números da tela — inclusive nas abas Adições de Unidades/Valor
+  com Presentes
+- Deploy em produção (VPS + nginx + systemd + TLS), com login próprio
+  e deploy automático via GitHub Actions a cada push na `main`
 - Paleta de cores oficial de Fabricante/Marca/Sub Marca/Variante/Sub
   Variante/Embalagem/Segmento, lida direto de `fonte/hexa_colors.xlsx`;
   contraste de texto (sobre barra ou como linha/rótulo) calculado
@@ -210,4 +258,3 @@ Abre em `http://127.0.0.1:8050/`.
   ainda não foi resolvida para quebra por Fabricante/Marca
 - Exportação em múltiplas folhas A4 (PDF) — hoje só PowerPoint
   (ESCOPO.md seção 5)
-- Deploy/hospedagem do app fora do ambiente local
