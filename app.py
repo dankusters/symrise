@@ -1810,6 +1810,18 @@ def update_segmento_and_bodysplash(breakdown, regiao_view, submarca_f, variante_
         segmento_options = SEGMENTO_FILTER_OPTIONS
         segmento_value = "Total"
         body_splash_enabled = False
+    elif breakdown == "segmento":
+        # a propria quebra: fixar um segmento especifico aqui seria
+        # contraditorio (a quebra ja mostra os 4 segmentos como
+        # categorias separadas) - volta pra "Total" em vez de deixar o
+        # ultimo valor usado (ex.: "Feminino" de uma quebra anterior
+        # por Marca) parado ali, desabilitado - isso parecia uma trava
+        # especifica naquele segmento pro usuario, quando na verdade o
+        # filtro so nao se aplica nessa quebra (ver conversa com o
+        # usuario, print de "Feminino" travado ao voltar pra Segmento).
+        segmento_options = SEGMENTO_FILTER_OPTIONS
+        segmento_value = "Total"
+        body_splash_enabled = False
     else:
         segmento_options = SEGMENTO_FILTER_OPTIONS
         segmento_value = segmento_f
