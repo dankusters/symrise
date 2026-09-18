@@ -19,3 +19,4 @@ jobs:
           # forçado pelo `command=` no authorized_keys do servidor —
           # o valor aqui é ignorado, mas documenta a intenção.
           script: /opt/symrise/deploy.sh
+          debug: true
