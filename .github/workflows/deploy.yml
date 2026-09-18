@@ -1,0 +1,21 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.VPS_DEPLOY_KEY }}
+          # o comando real executado é sempre /opt/symrise/deploy.sh,
+          # forçado pelo `command=` no authorized_keys do servidor —
+          # o valor aqui é ignorado, mas documenta a intenção.
+          script: /opt/symrise/deploy.sh
