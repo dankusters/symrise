@@ -182,6 +182,22 @@ Abre em `http://127.0.0.1:8050/`.
   num único slide, com piso legível — o que não couber nem assim
   transborda pra slide de continuação).
 
+- **`translations.py`** — dashboard é em inglês (migrado de português em
+  2026-09); `translate(texto)` é um dicionário PT→EN aplicado em tempo
+  de exibição a qualquer rótulo/categoria que vem da planilha (valores
+  de Segmento, nomes de região, buckets sintéticos de ranking como
+  "Other"/"Other Manufacturers"). Nomes próprios de Fabricante/Marca/
+  Sub Marca/Variante/Sub Variante (ex.: "Boticário", "Floratta") NUNCA
+  entram nesse dicionário — `translate()` devolve sem alteração
+  qualquer termo que não esteja cadastrado, então nomes próprios passam
+  intactos automaticamente, sem precisar de lista de exceção. Textos
+  fixos de interface (labels, botões, cabeçalhos, frases dos
+  Highlights, tela de login, export PowerPoint) estão hardcoded em
+  inglês direto no código de cada módulo, não passam por esse
+  dicionário. Pra ajustar alguma tradução, editar `TRANSLATIONS` aqui —
+  a mudança reflete em todo o app (dropdowns, gráficos, tabelas,
+  breadcrumbs, PPTX) sem mexer em outro arquivo.
+
 ## Deploy / Produção
 
 Em produção em `https://gettally.com.br/symrise/dashboard/` (VPS
@@ -251,6 +267,10 @@ Ubuntu), atrás de login próprio (não é o pop-up nativo do navegador).
   contraste de texto (sobre barra ou como linha/rótulo) calculado
   automaticamente pra qualquer cor da paleta, sem depender de uma
   coluna extra cadastrada cor a cor
+- Dashboard traduzido de português para inglês (ver `translations.py`)
+  — nomes próprios de Fabricante/Marca/Sub Marca/Variante/Sub Variante
+  continuam como vêm da planilha, todo o resto (interface, categorias
+  de gráfico/tabela, highlights, export PowerPoint, login) em inglês
 
 **Em aberto:**
 - Share Unidades / Share Valor com Presentes só funcionam quebrados por
