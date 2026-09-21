@@ -17,7 +17,7 @@ _PASSWORD = os.environ.get("DASH_AUTH_PASSWORD", "Kantar@2025")
 _SESSION_LIFETIME = timedelta(days=7)
 
 _LOGIN_PAGE = """<!DOCTYPE html>
-<html lang="pt-br">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -53,9 +53,9 @@ _LOGIN_PAGE = """<!DOCTYPE html>
     <img src="{logo_url}" alt="Symrise">
     <h1>Kantar Worldpanel - Dashboard</h1>
     {error_html}
-    <input type="text" name="username" placeholder="Usuário" autofocus required>
-    <input type="password" name="password" placeholder="Senha" required>
-    <button type="submit">Entrar</button>
+    <input type="text" name="username" placeholder="Username" autofocus required>
+    <input type="password" name="password" placeholder="Password" required>
+    <button type="submit">Log in</button>
   </form>
 </body>
 </html>"""
@@ -82,7 +82,7 @@ def init_auth(server: Flask, base_pathname: str) -> None:
                 session.permanent = True
                 session["authenticated"] = True
                 return redirect(request.args.get("next") or base_pathname)
-            error_html = '<p class="error">Usuário ou senha inválidos.</p>'
+            error_html = '<p class="error">Invalid username or password.</p>'
         return _LOGIN_PAGE.format(logo_url=f"{assets_prefix}symrise_logo.png", error_html=error_html)
 
     @server.route(logout_path)

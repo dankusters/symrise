@@ -5,7 +5,8 @@ aproximar categorias de participacao parecida que estao divergindo.
 
 E texto puro derivado dos mesmos dados do grafico (sem IA generativa) -
 por isso, num dashboard interativo, o mesmo callback que redesenha o
-grafico ao trocar um filtro recalcula este texto junto.
+grafico ao trocar um filtro recalcula este texto junto. O texto gerado
+e em ingles (ver translations.translate para nomes de categoria).
 
 Uso tipico:
 
@@ -20,13 +21,14 @@ Uso tipico:
         categories=["N+NE", "Sudeste", "C.Oeste", "Sul"],
         filters={...},
         value_scale=1 / 1_000_000,
-        unit_label="milhoes",
+        unit_label="millions",
     )
 """
 
 from __future__ import annotations
 
 from charts import YEARS_DEFAULT, compute_values, pct_change, price_unit_effects
+from translations import translate
 
 MAX_CHARS = 500
 
@@ -51,17 +53,18 @@ def _year_label(yr: str) -> str:
 
 
 def _trend_phrase(cat: str, last: float | None, prev: float | None) -> str:
+    name = translate(cat)
     if last is None:
-        return f"{cat} sem variação calculável"
+        return f"{name} has no calculable variation"
     if last > _FLAT_PCT:
         if prev is not None and prev > _FLAT_PCT:
-            return f"{cat} continua trajetória de crescimento, com alta de {last:+.1f}%"
-        return f"{cat} cresce {last:+.1f}%"
+            return f"{name} continues its growth trajectory, up {last:+.1f}%"
+        return f"{name} grows {last:+.1f}%"
     if last < -_FLAT_PCT:
         if prev is not None and prev < -_FLAT_PCT:
-            return f"{cat} segue em queda, recuando {last:+.1f}%"
-        return f"{cat} recuou {last:+.1f}%"
-    return f"{cat} ficou estável ({last:+.1f}%)"
+            return f"{name} keeps declining, down {last:+.1f}%"
+        return f"{name} declined {last:+.1f}%"
+    return f"{name} stayed stable ({last:+.1f}%)"
 
 
 def _market_phrase(last: float | None, market: float | None, is_largest: bool) -> str:
@@ -72,24 +75,24 @@ def _market_phrase(last: float | None, market: float | None, is_largest: bool) -
         return ""
     same_sign = (last >= 0) == (market >= 0)
     if same_sign:
-        direcao = "crescimento" if market >= 0 else "recuo"
-        # "acima do recuo" = recuo maior (mais negativo); "acima do
-        # crescimento" = crescimento maior (mais positivo) - por isso o
-        # sentido da comparacao inverte quando o mercado esta em recuo
-        maior_magnitude = last < market if market < 0 else last > market
-        rel = "acima" if maior_magnitude else "abaixo"
-        phrase = f"{rel} do {direcao} do mercado ({market:+.1f}%)"
-        if is_largest and rel == "acima":
-            phrase += ", puxando a média do mercado"
+        direction = "growth" if market >= 0 else "decline"
+        # "above the decline" = bigger drop (more negative); "above the
+        # growth" = bigger growth (more positive) - so the comparison
+        # flips when the market itself is declining
+        bigger_magnitude = last < market if market < 0 else last > market
+        rel = "above" if bigger_magnitude else "below"
+        phrase = f"{rel} the market's {direction} ({market:+.1f}%)"
+        if is_largest and rel == "above":
+            phrase += ", pulling the market average up"
         return phrase
-    return f"na contramão do mercado ({market:+.1f}%)"
+    return f"against the market trend ({market:+.1f}%)"
 
 
 def _share_phrase(share_change_pp: float | None) -> str:
     if share_change_pp is None or abs(share_change_pp) < _SHARE_CHANGE_MIN_PP:
         return ""
-    verbo = "ganhando" if share_change_pp > 0 else "perdendo"
-    return f"{verbo} {abs(share_change_pp):.1f}pp em MS"
+    verb = "gaining" if share_change_pp > 0 else "losing"
+    return f"{verb} {abs(share_change_pp):.1f}pp in market share"
 
 
 def generate_insight(
@@ -116,8 +119,7 @@ def generate_insight(
     docstring de `charts.alluvial_stack_chart`. `totals_override`: ver
     `charts.compute_variations` - usa esse total (em vez da soma de
     `categories`) pra participacao (MS) e pra variacao "do mercado",
-    quando `categories` e so um recorte top N.
-    """
+    quando `categories` e so um recorte top N."""
     if len(years) < 2:
         return ""
 
@@ -179,9 +181,9 @@ def generate_insight(
                     smaller, other = (a, b) if share_last[a] <= share_last[b] else (b, a)
                     if smaller in peer_note:
                         continue
-                    verbo = "cresceu" if last_pct[other] > 0 else "caiu"
+                    verb = "grew" if last_pct[other] > 0 else "fell"
                     peer_note[smaller] = (
-                        f"muito próximo da participação de {other}, que {verbo} {last_pct[other]:+.1f}%"
+                        f"very close to {translate(other)}'s share, which {verb} {last_pct[other]:+.1f}%"
                     )
                     used_as_peer.add(a)
                     used_as_peer.add(b)
@@ -201,14 +203,14 @@ def generate_insight(
         if share_frag:
             fragments.append(share_frag)
         if cat in peer_note:
-            porem = "porém ainda " if (share_last.get(cat) or 0) < 15 else ""
-            share_txt = f"{porem}{share_last[cat]:.1f}% do total" if share_last.get(cat) is not None else ""
+            still = "though still " if (share_last.get(cat) or 0) < 15 else ""
+            share_txt = f"{still}{share_last[cat]:.1f}% of the total" if share_last.get(cat) is not None else ""
             extra = ", ".join(x for x in (share_txt, peer_note[cat]) if x)
             fragments.append(extra)
         sentences.append(", ".join(fragments))
 
     if not sentences:
-        return f"Sem variação relevante em {last_year} no período analisado."
+        return f"No relevant variation in {last_year} for the period analyzed."
 
     text = ""
     for sentence in sentences:
@@ -234,7 +236,7 @@ def generate_price_unit_insight(
     last = effects[-1]
     total_pct, unit_pct, price_pct = last["total_pct"], last["unit_pct"], last["price_pct"]
     if total_pct is None or unit_pct is None or price_pct is None:
-        return "Sem variação calculável no último período."
+        return "No calculable variation in the last period."
 
     yr_label = last["yr1"].replace("Y", "")
     prev_label = last["yr0"].replace("Y", "")
@@ -243,31 +245,31 @@ def generate_price_unit_insight(
 
     dominant_is_price = abs(price_pct) >= abs(unit_pct)
     dominant_pct = price_pct if dominant_is_price else unit_pct
-    dominant_label = "preço" if dominant_is_price else "unidades vendidas"
+    dominant_label = "price" if dominant_is_price else "units sold"
     causal = (
-        "ações de reprecificação, mudança de mix, política de descontos, entre outras decisões"
+        "repricing actions, mix shift, discount policy, among other decisions"
         if dominant_is_price
-        else "ganho ou perda de penetração/distribuição, sazonalidade, ações promocionais de volume, entre outros fatores"
+        else "penetration/distribution gain or loss, seasonality, volume promotions, among other factors"
     )
     growth_phrase = (
-        f"do crescimento de {total_pct:.1f}%" if total_pct >= 0 else f"da queda de {abs(total_pct):.1f}%"
+        f"of the {total_pct:.1f}% growth" if total_pct >= 0 else f"of the {abs(total_pct):.1f}% decline"
     )
 
     if units_up == price_up:
-        verbo = "cresceram" if units_up else "caíram"
+        verb = "grew" if units_up else "fell"
         text = (
-            f"Tanto as vendas de unidades quanto o preço médio {verbo} em {yr_label} (ante {prev_label}), "
-            f"sendo {abs(dominant_pct):.1f}% {growth_phrase} no Valor com Presentes de responsabilidade "
-            f"do efeito {dominant_label}, que pode ser derivado de {causal}."
+            f"Both unit sales and average price {verb} in {yr_label} (vs. {prev_label}), "
+            f"with {abs(dominant_pct):.1f}% {growth_phrase} in Revenue attributable "
+            f"to the {dominant_label} effect, which may stem from {causal}."
         )
     else:
-        unidades_verbo = "cresceram" if units_up else "caíram"
-        preco_verbo = "cresceu" if price_up else "caiu"
+        units_verb = "grew" if units_up else "fell"
+        price_verb = "grew" if price_up else "fell"
         text = (
-            f"As vendas de unidades {unidades_verbo} ({unit_pct:+.1f}%) enquanto o preço médio {preco_verbo} "
-            f"({price_pct:+.1f}%) em {yr_label} (ante {prev_label}); o efeito {dominant_label} foi "
-            f"determinante, respondendo por {abs(dominant_pct):.1f}% {growth_phrase} no Valor com "
-            f"Presentes, que pode ser derivado de {causal}."
+            f"Unit sales {units_verb} ({unit_pct:+.1f}%) while the average price {price_verb} "
+            f"({price_pct:+.1f}%) in {yr_label} (vs. {prev_label}); the {dominant_label} effect was "
+            f"decisive, accounting for {abs(dominant_pct):.1f}% {growth_phrase} in Revenue, "
+            f"which may stem from {causal}."
         )
     return text
 
@@ -275,11 +277,10 @@ def generate_price_unit_insight(
 def _format_bridge_amount(value: float, unit_label: str, signed: bool = False) -> str:
     """Formata um valor (ja escalado) + unidade pro texto de
     `generate_unit_additions_insight`. Unidades monetarias (`unit_label`
-    comecando com "R$", ex.: "R$ milhões") ficam com o "R$" ANTES do
-    numero ("R$ 1.216,47 milhões") - concatenar {numero} {unit_label}
-    direto (como as demais unidades, ex.: "milhões", "milhões de
-    unidades") daria "1.216,47 R$ milhões", que nao faz sentido em
-    portugues."""
+    comecando com "R$", ex.: "R$ million") ficam com o "R$" ANTES do
+    numero ("R$ 1,216.47 million") - concatenar {numero} {unit_label}
+    direto (como as demais unidades, ex.: "millions", "million units")
+    daria "1,216.47 R$ million", que nao faz sentido."""
     prefix, unit = ("R$ ", unit_label[2:].strip()) if unit_label.startswith("R$") else ("", unit_label)
     number = f"{value:+,.2f}" if signed else f"{abs(value):,.2f}"
     suffix = f" {unit}" if unit else ""
@@ -292,34 +293,34 @@ def generate_unit_additions_insight(
     totals: dict[str, float],
     yr0: str,
     yr1: str,
-    unit_label: str = "milhões",
-    indicator_label: str = "Unidades",
+    unit_label: str = "millions",
+    indicator_label: str = "Units",
 ) -> str:
     """Comentario pro bridge chart de `charts.unit_additions_bridge_chart`
     (transicao UNICA yr0->yr1, ex.: 2024->2025): quem mais empurrou o
-    total de `indicator_label` (ex.: "Unidades", "Valor com Presentes" -
-    ver `app.ADDITIONS_TABS`) pra cima e pra baixo, junto com a variacao
-    do total nesse periodo. `names`/`deltas`/`totals`: mesma estrutura
+    total de `indicator_label` (ex.: "Units", "Revenue" - ver
+    `app.ADDITIONS_TABS`) pra cima e pra baixo, junto com a variacao do
+    total nesse periodo. `names`/`deltas`/`totals`: mesma estrutura
     devolvida por `app._build_additions_bridge` (inclui a categoria
-    residual "Outras"/"Demais outras" quando aplicavel)."""
+    residual "Other"/"Other (remaining)" quando aplicavel)."""
     if not names:
         return ""
     total_delta = totals[yr1] - totals[yr0]
 
     yr_label = yr1.replace("Y", "")
     prev_label = yr0.replace("Y", "")
-    total_verb = "cresceu" if total_delta >= 0 else "caiu"
+    total_verb = "grew" if total_delta >= 0 else "fell"
 
     ranked = sorted(names, key=lambda n: deltas[n], reverse=True)
     top_gain, top_loss = ranked[0], ranked[-1]
     gain_delta, loss_delta = deltas[top_gain], deltas[top_loss]
 
     parts = [
-        f"O total de {indicator_label} {total_verb} {_format_bridge_amount(total_delta, unit_label)} em {yr_label} "
-        f"(ante {prev_label})."
+        f"Total {indicator_label} {total_verb} {_format_bridge_amount(total_delta, unit_label)} in {yr_label} "
+        f"(vs. {prev_label})."
     ]
     if gain_delta > 0:
-        parts.append(f"{top_gain} liderou o crescimento, contribuindo com {_format_bridge_amount(gain_delta, unit_label, signed=True)}.")
+        parts.append(f"{translate(top_gain)} led the growth, contributing {_format_bridge_amount(gain_delta, unit_label, signed=True)}.")
     if loss_delta < 0 and top_loss != top_gain:
-        parts.append(f"{top_loss} puxou a queda, com {_format_bridge_amount(loss_delta, unit_label, signed=True)}.")
+        parts.append(f"{translate(top_loss)} drove the decline, with {_format_bridge_amount(loss_delta, unit_label, signed=True)}.")
     return " ".join(parts)

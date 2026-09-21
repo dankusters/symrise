@@ -79,11 +79,11 @@ REGION_COLORS: dict[str, str] = {
 # agua"), "Não Body Splash" um cinza mais escuro que "Outras" pra nao
 # ser confundido com residual/sem-dados.
 _SYNTHETIC_COLORS: dict[str, str] = {
-    "Outras": "#E0E0E0",
-    "Demais outras": "#E0E0E0",
+    "Other": "#E0E0E0",
+    "Other (remaining)": "#E0E0E0",
     "Total": "#4A4A4A",
     "Body Splash": "#2AA9C9",
-    "Não Body Splash": "#8C8C8C",
+    "Non-Body Splash": "#8C8C8C",
 }
 
 
@@ -96,7 +96,7 @@ def _load_official_colors(
     try:
         wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     except (FileNotFoundError, OSError) as exc:
-        warnings.warn(f"Nao foi possivel ler {path} ({exc}); usando fallback de cores.")
+        warnings.warn(f"Could not read {path} ({exc}); using color fallback.")
         return {}
 
     by_fabricante: dict[str, tuple[str, int]] = {}

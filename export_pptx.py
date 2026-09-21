@@ -25,6 +25,7 @@ from pptx.util import Emu, Inches, Pt
 
 from charts import YEARS_DEFAULT, compute_variations
 from etl import SOURCE_PATH
+from translations import translate
 
 _SLIDE_WIDTH = Inches(13.333)
 _SLIDE_HEIGHT = Inches(7.5)
@@ -54,7 +55,7 @@ _CONTENT_TOP = Emu(int(_MARGIN + _LOGO_HEIGHT + _LOGO_GAP))
 # rodape com a fonte dos dados, canto inferior direito de todo slide -
 # base do conteudo sobe um pouco pra abrir espaco, sem sobrepor (mesma
 # logica do logo, no topo)
-_FOOTER_TEXT = f"Fonte: {os.path.basename(SOURCE_PATH)}"
+_FOOTER_TEXT = f"Source: {os.path.basename(SOURCE_PATH)}"
 _FOOTER_HEIGHT = Inches(0.2)
 _FOOTER_GAP = Inches(0.05)
 _FOOTER_WIDTH = Inches(4.5)
@@ -168,8 +169,8 @@ _HEADER_RGB = RGBColor(0x22, 0x22, 0x22)
 # INDICATORS[...]["additive"] em app.py - a 2a linha de cada celula e a
 # variacao de MS) e sem (ex.: Preco Medio, onde MS nao faz sentido e a
 # celula so tem a 1a linha).
-TABLE_LEGEND_WITH_SHARE = "1º número: variação % do indicador • 2º número: variação da participação (share) no total, em p.p."
-TABLE_LEGEND_NO_SHARE = "Número: variação % do indicador no período."
+TABLE_LEGEND_WITH_SHARE = "1st number: % change of the indicator • 2nd number: change in share of the total, in p.p."
+TABLE_LEGEND_NO_SHARE = "Number: % change of the indicator in the period."
 
 
 def _add_variation_paragraph(paragraph, value, suffix, nominal_text, font_size):
@@ -247,7 +248,7 @@ def _fill_table(table, header, rows_data, value_decimals, show_share, header_siz
 
     for i, (cat, cells) in enumerate(rows_data, start=1):
         cat_cell = table.cell(i, 0)
-        cat_cell.text = cat
+        cat_cell.text = translate(cat)
         cat_cell.text_frame.word_wrap = True
         cat_run = cat_cell.text_frame.paragraphs[0].runs[0]
         cat_run.font.name = _FONT_NAME
@@ -463,7 +464,7 @@ def build_pptx(
     if categories:
         variations = compute_variations(values, categories, YEARS_DEFAULT, additive, totals_override)
         year_pairs = [(YEARS_DEFAULT[i][1:], YEARS_DEFAULT[i + 1][1:]) for i in range(len(YEARS_DEFAULT) - 1)]
-        header = ["Categoria"] + [f"{y0}→{y1}" for y0, y1 in year_pairs]
+        header = ["Category"] + [f"{y0}→{y1}" for y0, y1 in year_pairs]
         rows_data = [
             (
                 cat,
@@ -558,7 +559,7 @@ def _fill_additions_table(table, header, rows_data, value_decimals, header_size,
 
     for i, (name, delta) in enumerate(rows_data, start=1):
         name_cell = table.cell(i, 0)
-        name_cell.text = name
+        name_cell.text = translate(name)
         name_cell.text_frame.word_wrap = True
         name_run = name_cell.text_frame.paragraphs[0].runs[0]
         name_run.font.name = _FONT_NAME
@@ -604,7 +605,7 @@ def build_additions_pptx(
     img_h_px = int(fig.layout.height or 520)
     img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
 
-    header = ["Categoria", f"{year0[1:]}→{year1[1:]}"]
+    header = ["Category", f"{year0[1:]}→{year1[1:]}"]
     rows_data = [(name, deltas[name]) for name in names]
 
     slide = prs.slides.add_slide(prs.slide_layouts[6])

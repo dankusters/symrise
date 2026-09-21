@@ -40,6 +40,7 @@ import math
 import plotly.graph_objects as go
 
 from colors import contrast_text_color, get_color, readable_foreground
+from translations import translate
 
 YEARS_DEFAULT = ("Y2022", "Y2023", "Y2024", "Y2025")
 
@@ -212,7 +213,7 @@ def _empty_figure(title: str, subtitle: str, years: tuple[str, ...], height: int
     header = title if not subtitle else f"{title}<br><span style='font-size:13px;color:#666'>{subtitle}</span>"
     fig = go.Figure()
     fig.add_annotation(
-        text="Sem dados para esta combinação de filtros",
+        text="No data for this filter combination",
         x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False,
         font=dict(color="#888", size=14),
     )
@@ -517,7 +518,7 @@ def alluvial_stack_chart(
         annotations.append(dict(
             x=label_x,
             y=mid,
-            text=cat,
+            text=translate(cat),
             showarrow=False,
             xanchor="left",
             font=dict(color=label_color, size=11),
@@ -564,7 +565,7 @@ def line_evolution_chart(
     width: int = 760,
     values_override: dict[str, dict[str, float]] | None = None,
     weighted_average: dict[str, float | None] | None = None,
-    weighted_average_label: str = "Média ponderada",
+    weighted_average_label: str = "Weighted average",
 ) -> go.Figure:
     """Grafico de linha para indicadores nao cumulativos/nao empilhaveis
     (Penetracao, Vol. por Comprador, Frequencia, Preco Medio): uma linha
@@ -596,7 +597,7 @@ def line_evolution_chart(
                 x=x_positions,
                 y=y_values,
                 mode="lines+markers",
-                name=cat,
+                name=translate(cat),
                 line=dict(color=color, width=2.5, shape="spline", smoothing=0.7),
                 marker=dict(size=6, color="white", line=dict(color=color, width=1.5)),
                 showlegend=False,
@@ -606,7 +607,7 @@ def line_evolution_chart(
             x=x_positions[-1],
             xshift=8,
             y=y_values[-1],
-            text=cat,
+            text=translate(cat),
             showarrow=False,
             xanchor="left",
             font=dict(color=color, size=11),
@@ -730,7 +731,7 @@ def price_unit_waterfall_chart(
     unidades: dict[str, float],
     valor: dict[str, float],
     years: tuple[str, ...] = YEARS_DEFAULT,
-    unit_label: str = "R$ milhões",
+    unit_label: str = "R$ million",
     value_decimals: int = 2,
     height: int = 460,
     width: int = 760,
@@ -760,8 +761,8 @@ def price_unit_waterfall_chart(
     for i, eff in enumerate(effects):
         yr1 = eff["yr1"]
         for label, effect, pct in (
-            ("Unidades", eff["unit_effect"], eff["unit_pct"]),
-            ("Preço", eff["price_effect"], eff["price_pct"]),
+            ("Units", eff["unit_effect"], eff["unit_pct"]),
+            ("Price", eff["price_effect"], eff["price_pct"]),
         ):
             x_ticktext.append(label)
             measures.append("relative")
@@ -901,7 +902,7 @@ def unit_additions_bridge_chart(
     order: list[str],
     deltas: dict[str, float],
     value_decimals: int = 2,
-    unit_label: str = "milhões",
+    unit_label: str = "millions",
     height: int = 520,
 ) -> go.Figure:
     """Waterfall/"bridge" da aba "Adicoes de Unidades": dois pilares
@@ -933,7 +934,7 @@ def unit_additions_bridge_chart(
     bar_text = [f"<b>{totals[yr0]:,.{value_decimals}f}</b>"]
 
     for name in order:
-        x_ticktext.append(name)
+        x_ticktext.append(translate(name))
         measures.append("relative")
         delta = deltas[name]
         y_values.append(delta)

@@ -29,6 +29,7 @@ from charts import (
 from etl import build_dataset, load_category_exceptions
 from export_pptx import TABLE_LEGEND_NO_SHARE, TABLE_LEGEND_WITH_SHARE, build_additions_pptx, build_price_unit_pptx, build_pptx
 from insights import generate_insight, generate_price_unit_insight, generate_unit_additions_insight
+from translations import translate
 
 df = build_dataset()
 
@@ -43,7 +44,7 @@ REGIAO_VIEWS = ["T. Brasil", "Sudeste", "C.Oeste", "Sul", "N+NE"]
 # update_filters_disabled/update_dimension_dropdown_disabled). Exclui
 # "T. Brasil" das categorias exibidas (e a soma das outras 4, entraria
 # como mais uma barra dentro do proprio total).
-REGIOES_TAB_KEY = "Regiões"
+REGIOES_TAB_KEY = "Regions"
 REGIOES_BREAKDOWN_CATEGORIES = [r for r in REGIAO_VIEWS if r != "T. Brasil"]
 SEGMENTOS = ["Feminino", "Masculino", "Infantil", "Unisex"]
 
@@ -193,9 +194,9 @@ ADDITIONS_TABS = [
     dict(
         key="unit_additions",
         indicator="unidades",
-        tab_label=f"Adições de Unidades {ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}",
-        chart_unit_label="milhões de unidades",
-        insight_label="Unidades",
+        tab_label=f"Units Added {ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}",
+        chart_unit_label="million units",
+        insight_label="Units",
         graph_id="graph-unit-additions",
         table_id="unit-additions-table",
         insight_id="unit-additions-insight",
@@ -203,19 +204,19 @@ ADDITIONS_TABS = [
     dict(
         key="value_additions",
         indicator="valor_com_presentes",
-        tab_label=f"Adições de Valor com Presente {ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}",
-        chart_unit_label="R$ milhões",
-        insight_label="Valor com Presentes",
+        tab_label=f"Revenue Added {ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}",
+        chart_unit_label="R$ million",
+        insight_label="Revenue",
         graph_id="graph-value-additions",
         table_id="value-additions-table",
         insight_id="value-additions-insight",
     ),
 ]
 INDICATORS = {
-    "volume": dict(label="Volume", value_scale=1e-6, value_decimals=2, unit_label="milhões de litros", is_percent=False, additive=True, chart_type="stack"),
-    "unidades": dict(label="Unidades (milhões)", value_scale=1e-6, value_decimals=2, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
-    "valor_com_presentes": dict(label="Valor com Presentes", value_scale=1e-6, value_decimals=2, unit_label="R$ milhões", is_percent=False, additive=True, chart_type="stack"),
-    "compradores": dict(label="Compradores (milhões)", value_scale=1e-6, value_decimals=2, unit_label="milhões", is_percent=False, additive=True, chart_type="stack"),
+    "volume": dict(label="Volume", value_scale=1e-6, value_decimals=2, unit_label="million liters", is_percent=False, additive=True, chart_type="stack"),
+    "unidades": dict(label="Units (millions)", value_scale=1e-6, value_decimals=2, unit_label="millions", is_percent=False, additive=True, chart_type="stack"),
+    "valor_com_presentes": dict(label="Revenue", value_scale=1e-6, value_decimals=2, unit_label="R$ million", is_percent=False, additive=True, chart_type="stack"),
+    "compradores": dict(label="Buyers (millions)", value_scale=1e-6, value_decimals=2, unit_label="millions", is_percent=False, additive=True, chart_type="stack"),
     # Penetracao/Vol. por Comprador/Frequencia sao indicadores de
     # taxa/media (ESCOPO.md secao 3) - nao aditivos entre categorias
     # (ex.: penetracao de Natura + penetracao de Boticario NAO e a
@@ -227,9 +228,9 @@ INDICATORS = {
     # compradores. Sem `weight_indicator`/`average_mode`: ao contrario
     # do Preco Medio, nao ha uma media (simples ou ponderada) obvia pra
     # essas 3 - a linha tracejada fica de fora.
-    "penetracao": dict(label="Penetração", value_scale=1.0, value_decimals=1, unit_label="", is_percent=True, additive=False, chart_type="line", rank_with="volume"),
-    "vol_por_comprador": dict(label="Vol. por Comprador", value_scale=1.0, value_decimals=1, unit_label="litros", is_percent=False, additive=False, chart_type="line", rank_with="volume"),
-    "frequencia": dict(label="Frequência", value_scale=1.0, value_decimals=1, unit_label="", is_percent=False, additive=False, chart_type="line", rank_with="volume"),
+    "penetracao": dict(label="Penetration Rate", value_scale=1.0, value_decimals=1, unit_label="", is_percent=True, additive=False, chart_type="line", rank_with="volume"),
+    "vol_por_comprador": dict(label="Volume per Buyer", value_scale=1.0, value_decimals=1, unit_label="liters", is_percent=False, additive=False, chart_type="line", rank_with="volume"),
+    "frequencia": dict(label="Frequency Rate", value_scale=1.0, value_decimals=1, unit_label="", is_percent=False, additive=False, chart_type="line", rank_with="volume"),
     # nao aditivo (preco medio nao se soma entre categorias) - por isso
     # reaproveita o ranking/categorias ja escolhidas no bloco de Volume
     # (`rank_with`) em vez de rankear pelo proprio preco (uma marca de
@@ -241,7 +242,7 @@ INDICATORS = {
     # pra olhar o nivel de preco em si, sem marcas de maior volume vendido
     # puxarem a media
     "preco_medio_litros": dict(
-        label="Preço Médio (Litros)", value_scale=1.0, value_decimals=2, unit_label="R$/litro",
+        label="Average Price per Liter", value_scale=1.0, value_decimals=2, unit_label="R$/liter",
         is_percent=False, additive=False, chart_type="line", rank_with="volume", weight_indicator="volume",
         average_mode="simple",
     ),
@@ -253,8 +254,8 @@ INDICATORS = {
 # vez de "19.0 (R$ bilhoes)". Cada entrada: (rotulo em milhoes, rotulo
 # em bilhoes, casas decimais quando em bilhoes)
 DYNAMIC_UNIT = {
-    "volume": ("milhões de litros", "bilhões de litros", 2),
-    "valor_com_presentes": ("R$ milhões", "R$ bilhões", 2),
+    "volume": ("million liters", "billion liters", 2),
+    "valor_com_presentes": ("R$ million", "R$ billion", 2),
 }
 _BILLION_THRESHOLD = 1000.0  # valores ja vem em milhoes; 1000 milhoes = 1 bilhao
 
@@ -395,7 +396,7 @@ def _children_values(indicator, dim_col, base_filters, parent_cod):
     }
 
 
-def _rank_top_n(values_all, other_label="Outras", top_n=_TOP_N, add_other=True):
+def _rank_top_n(values_all, other_label="Other", top_n=_TOP_N, add_other=True):
     """Top N nomes de `values_all` (ultimo ano) + (se `add_other`) um
     grupo sintetico com o restante, pra barra fechar o total real. Com
     `add_other=False` o que sobra do top N e simplesmente descartado do
@@ -417,7 +418,7 @@ def _rank_top_n(values_all, other_label="Outras", top_n=_TOP_N, add_other=True):
             # rastreadas documentado no escopo) - o rotulo sintetico do
             # "resto do ranking" precisa de outro nome pra nao sobrescrever
             # nem duplicar essa entidade real na lista de categorias
-            label = f"Demais {other_label.lower()}"
+            label = f"Other {other_label.lower()}"
         values[label] = {
             yr: sum(values_all[n][yr] for n in ranked) - sum(values[n][yr] for n in top_names)
             for yr in YEARS_DEFAULT
@@ -433,7 +434,7 @@ def _weighted_mean(values_all, weight_all, keys, yr):
     return sum(values_all[k][yr] * weight_all.get(k, {}).get(yr, 0.0) for k in keys) / weight_sum
 
 
-def _apply_ranking(values_all, top_n, other_label="Outras", add_other=True, categories_override=None, weight_all=None):
+def _apply_ranking(values_all, top_n, other_label="Other", add_other=True, categories_override=None, weight_all=None):
     """Por padrao (`categories_override=None`), rankeia normalmente (ver
     `_rank_top_n`). Quando `categories_override` e dado - uma lista de
     nomes ja rankeada por OUTRO indicador (ex.: um grafico de Preco
@@ -468,7 +469,7 @@ def _apply_ranking(values_all, top_n, other_label="Outras", add_other=True, cate
 
 
 def discover_top_categories(
-    indicator, dim_col, base_filters, parent_cod, other_label="Outras", top_n=_TOP_N,
+    indicator, dim_col, base_filters, parent_cod, other_label="Other", top_n=_TOP_N,
     categories_override=None, weight_indicator=None, add_other=True,
 ):
     """Top N filhos diretos de `parent_cod` (ultimo ano) + (se `add_other`)
@@ -578,7 +579,7 @@ def _descend_to_level(indicator, dim_col, base_filters, start_cod, target_classi
 
 
 _BODY_SPLASH_LABEL = "Body Splash"
-_NOT_BODY_SPLASH_LABEL = "Não Body Splash"
+_NOT_BODY_SPLASH_LABEL = "Non-Body Splash"
 
 
 def _body_splash_leaves(scoped_df, cod, year_cols, buckets, scale):
@@ -827,10 +828,10 @@ def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
 
 
 def _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
-    parts = [regiao_view]
+    parts = [translate(regiao_view)]
     for value in (fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
         if value and value != "Total":
-            parts.append(value)
+            parts.append(translate(value))
     return " > ".join(parts)
 
 
@@ -948,7 +949,7 @@ def build_selection(
         crumb_parts = [REGIOES_TAB_KEY]
         for value in (segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
             if value and value != "Total":
-                crumb_parts.append(value)
+                crumb_parts.append(translate(value))
         crumb = " > ".join(crumb_parts)
         values = _regiao_root_values(
             indicator_id, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f, body_splash_f,
@@ -962,7 +963,7 @@ def build_selection(
         # nao usa `_breadcrumb`, que so faria sentido com eles
         parent_cod, label = EMBALAGEM_BREAKDOWNS[breakdown]
         categories, values = _embalagem_values(regiao_view, indicator_id, parent_cod)
-        return categories, "rotulo", {}, values, f"{regiao_view} > {label}", None
+        return categories, "rotulo", {}, values, f"{translate(regiao_view)} > {translate(label)}", None
 
     crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
 
@@ -975,19 +976,19 @@ def build_selection(
             # _segmento_root_values) em vez do filtro generico, que so
             # enxerga 'segmento'='Total' nesse nivel da arvore
             values = _segmento_root_values(regiao_view, indicator_id)
-            return SEGMENTOS, "segmento", {}, values, f"{crumb} > Segmentos", None
+            return SEGMENTOS, "segmento", {}, values, f"{crumb} > Segments", None
         filters = {"regiao": regiao_view, **_scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)}
-        return SEGMENTOS, "segmento", filters, None, f"{crumb} > Segmentos", None
+        return SEGMENTOS, "segmento", filters, None, f"{crumb} > Segments", None
 
     if breakdown == "fabricante":
         base_filters = {"regiao": regiao_view, "segmento": segmento_f}
         parent_cod = _fabricante_root_cod(regiao_view, segmento_f)
         categories, values = discover_top_categories(
-            indicator_id, "fabricante", base_filters, parent_cod, other_label="Demais Fabricantes", top_n=top_n,
+            indicator_id, "fabricante", base_filters, parent_cod, other_label="Other Manufacturers", top_n=top_n,
             categories_override=categories_override, weight_indicator=weight_indicator, add_other=fabricante_outros,
         )
         true_totals = None if fabricante_outros else _cod_own_values(indicator_id, parent_cod, base_filters)
-        return categories, "fabricante", base_filters, values, f"{crumb} > Fabricantes (top {top_n})", true_totals
+        return categories, "fabricante", base_filters, values, f"{crumb} > Manufacturers (top {top_n})", true_totals
 
     # Marca/Submarca/Variante: nao exigem fabricante/marca/submarca fixo -
     # com o pai em "Total", descobre a partir da raiz (todos os
@@ -1034,7 +1035,7 @@ def build_selection(
             values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
         )
         true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-        return categories, "marca", base_filters, values, f"{crumb} > Marcas (top {top_n})", true_totals
+        return categories, "marca", base_filters, values, f"{crumb} > Brands (top {top_n})", true_totals
 
     if breakdown == "submarca":
         if marca_f and marca_f != "Total":
@@ -1052,7 +1053,7 @@ def build_selection(
             values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
         )
         true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-        return categories, "rotulo", base_filters, values, f"{crumb} > Submarcas (top {top_n})", true_totals
+        return categories, "rotulo", base_filters, values, f"{crumb} > Sub-brands (top {top_n})", true_totals
 
     if breakdown == "variante":
         if submarca_f and submarca_f != "Total":
@@ -1072,7 +1073,7 @@ def build_selection(
             values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
         )
         true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-        return categories, "rotulo", base_filters, values, f"{crumb} > Variantes (top {top_n})", true_totals
+        return categories, "rotulo", base_filters, values, f"{crumb} > SKUs (top {top_n})", true_totals
 
     # breakdown == "subvariante" - so existe pra 2 marcas na planilha
     # (Natura, Boticario); as demais retornam categorias vazias (ver
@@ -1096,11 +1097,11 @@ def build_selection(
         values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
     )
     true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-    return categories, "rotulo", base_filters, values, f"{crumb} > Sub Variantes (top {top_n})", true_totals
+    return categories, "rotulo", base_filters, values, f"{crumb} > Sub-SKUs (top {top_n})", true_totals
 
 
 def _dropdown(id_, options, value, disabled=False):
-    return dcc.Dropdown(id=id_, options=[{"label": o, "value": o} for o in options], value=value, clearable=False, disabled=disabled)
+    return dcc.Dropdown(id=id_, options=[{"label": translate(o), "value": o} for o in options], value=value, clearable=False, disabled=disabled)
 
 
 def _pptx_button(id_):
@@ -1110,7 +1111,7 @@ def _pptx_button(id_):
                 src=app.get_asset_url("pptx_icon.svg"),
                 style={"height": "14px", "width": "14px", "marginRight": "6px"},
             ),
-            "Exportar PowerPoint",
+            "Export PowerPoint",
         ],
         id=id_,
         n_clicks=0,
@@ -1183,18 +1184,18 @@ def _variation_table(categories, values, additive, value_decimals, totals_overri
     substitui os rotulos de variacao que antes ficavam dentro do
     grafico. `totals_override`: ver `charts.compute_variations`."""
     if not categories:
-        return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
+        return html.P("No data for this filter combination.", style={"color": "#888", "fontSize": "12px"})
 
     variations = compute_variations(values, categories, YEARS_DEFAULT, additive, totals_override)
     year_pairs = [(YEARS_DEFAULT[i][1:], YEARS_DEFAULT[i + 1][1:]) for i in range(len(YEARS_DEFAULT) - 1)]
 
     header = html.Tr(
-        [html.Th("Categoria", style={**_TABLE_CELL_STYLE, "textAlign": "left"})]
+        [html.Th("Category", style={**_TABLE_CELL_STYLE, "textAlign": "left"})]
         + [html.Th(f"{y0}→{y1}", style=_TABLE_CELL_STYLE) for y0, y1 in year_pairs]
     )
     rows = [
         html.Tr(
-            [html.Td(cat, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"})]
+            [html.Td(translate(cat), style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"})]
             + [
                 _variation_cell(
                     variations[cat]["pct"][i], variations[cat]["share_pp"][i],
@@ -1226,18 +1227,18 @@ def _additions_table(names, deltas, value_decimals):
     exatamente o numero plotado no grafico pra cada nome - "reflete o
     que se ve no grafico", nao uma tabela de variacao percentual."""
     if not names:
-        return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
+        return html.P("No data for this filter combination.", style={"color": "#888", "fontSize": "12px"})
 
     header = html.Tr(
         [
-            html.Th("Categoria", style={**_TABLE_CELL_STYLE, "textAlign": "left"}),
+            html.Th("Category", style={**_TABLE_CELL_STYLE, "textAlign": "left"}),
             html.Th(f"{ADDITIONS_YEAR0[1:]}→{ADDITIONS_YEAR1[1:]}", style=_TABLE_CELL_STYLE),
         ]
     )
     rows = [
         html.Tr(
             [
-                html.Td(name, style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"}),
+                html.Td(translate(name), style={**_TABLE_CELL_STYLE, "textAlign": "left", "fontWeight": "600", "whiteSpace": "normal"}),
                 _additions_cell(deltas[name], value_decimals),
             ]
         )
@@ -1344,25 +1345,25 @@ def _considerations_reclass_table():
     fonte/change_category.xlsx ganha novas linhas, sem precisar editar
     esta pagina."""
     if not CATEGORY_CHANGES:
-        return html.P("Nenhuma reclassificação registrada.", style={"color": "#666"})
+        return html.P("No reclassifications recorded.", style={"color": "#666"})
     return html.Table(
         style={"borderCollapse": "collapse", "width": "100%", "marginBottom": "8px"},
         children=[
             html.Thead(html.Tr([
-                html.Th("Produto", style=_CONS_TH_STYLE),
-                html.Th("Cód.", style=_CONS_TH_STYLE),
-                html.Th("De", style=_CONS_TH_STYLE),
-                html.Th("Para", style=_CONS_TH_STYLE),
-                html.Th("Ignorado?", style=_CONS_TH_STYLE),
+                html.Th("Product", style=_CONS_TH_STYLE),
+                html.Th("Code", style=_CONS_TH_STYLE),
+                html.Th("From", style=_CONS_TH_STYLE),
+                html.Th("To", style=_CONS_TH_STYLE),
+                html.Th("Ignored?", style=_CONS_TH_STYLE),
             ])),
             html.Tbody([
                 html.Tr([
                     html.Td(change["nome"], style=_CONS_TD_STYLE),
                     html.Td(change["cod"], style={**_CONS_TD_STYLE, "color": "#888", "fontFamily": "monospace"}),
-                    html.Td(change["de"], style=_CONS_TD_STYLE),
-                    html.Td(f"→ {change['para']}", style={**_CONS_TD_STYLE, "fontWeight": "600"}),
+                    html.Td(translate(change["de"]), style=_CONS_TD_STYLE),
+                    html.Td(f"→ {translate(change['para'])}", style={**_CONS_TD_STYLE, "fontWeight": "600"}),
                     html.Td(
-                        "Sim — nunca vira categoria própria" if change["cod"] in IGNORE_CODS else "—",
+                        "Yes — never becomes its own category" if change["cod"] in IGNORE_CODS else "—",
                         style={**_CONS_TD_STYLE, "color": "#C23B3B", "fontWeight": "600"} if change["cod"] in IGNORE_CODS
                         else {**_CONS_TD_STYLE, "color": "#bbb"},
                     ),
@@ -1377,11 +1378,11 @@ def _considerations_extend_list():
     """Lista das entidades "sem filhos" (ver EXTENDED_NAMES/
     ExtendCategory) selecionaveis como filtro em niveis extras."""
     if not EXTENDED_NAMES:
-        return html.P("Nenhuma extensão registrada.", style={"color": "#666"})
+        return html.P("No extensions recorded.", style={"color": "#666"})
     return html.Ul(
         style={"marginTop": "8px"},
         children=[
-            html.Li(f"{name} — também selecionável como {', '.join(sorted(labels))}", style={"marginBottom": "4px"})
+            html.Li(f"{name} — also selectable as {', '.join(sorted(translate(lbl) for lbl in labels))}", style={"marginBottom": "4px"})
             for name, (native, labels) in sorted(EXTENDED_NAMES.items())
         ],
     )
@@ -1397,7 +1398,7 @@ def _considerations_body_splash_table():
     Splash - so 10 das 115, a maioria e "Não"."""
     sub = df.loc[df["classificacao"] == "Sub Marca", ["marca", "rotulo", "is_body_splash"]].drop_duplicates()
     if sub.empty:
-        return html.P("Nenhuma submarca classificada.", style={"color": "#666"})
+        return html.P("No sub-brands classified.", style={"color": "#666"})
     ordered = sub.sort_values(["is_body_splash", "marca", "rotulo"], ascending=[False, True, True])
     n_sim = (sub["is_body_splash"] == "Sim").sum()
     rows = [
@@ -1405,7 +1406,7 @@ def _considerations_body_splash_table():
             html.Td(marca, style=_CONS_TD_STYLE),
             html.Td(rotulo, style=_CONS_TD_STYLE),
             html.Td(
-                is_bs,
+                translate(is_bs),
                 style={**_CONS_TD_STYLE, "fontWeight": "600", "color": "#1E8E5A"} if is_bs == "Sim" else _CONS_TD_STYLE,
             ),
         ])
@@ -1416,15 +1417,15 @@ def _considerations_body_splash_table():
             style={"borderCollapse": "collapse", "width": "100%", "marginBottom": "8px"},
             children=[
                 html.Thead(html.Tr([
-                    html.Th("Marca", style=_CONS_TH_STYLE),
-                    html.Th("Submarca", style=_CONS_TH_STYLE),
+                    html.Th("Brand", style=_CONS_TH_STYLE),
+                    html.Th("Sub-brand", style=_CONS_TH_STYLE),
                     html.Th("Body Splash", style=_CONS_TH_STYLE),
                 ])),
                 html.Tbody(rows),
             ],
         ),
         html.P(
-            f"{n_sim} de {len(sub)} submarcas classificadas são Body Splash.",
+            f"{n_sim} of {len(sub)} classified sub-brands are Body Splash.",
             style={"color": "#888", "fontSize": "13px", "marginTop": "4px"},
         ),
     ])
@@ -1449,9 +1450,9 @@ def _considerations_layout():
                 style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "20px"},
                 children=[
                     html.Img(src=app.get_asset_url("symrise_logo.png"), style={"height": "30px"}),
-                    html.H2("Considerações", style={"margin": 0, "flex": "1"}),
+                    html.H2("Considerations", style={"margin": 0, "flex": "1"}),
                     html.Button(
-                        "← Voltar ao dashboard",
+                        "← Back to dashboard",
                         id="considerations-close-btn",
                         n_clicks=0,
                         style={
@@ -1462,28 +1463,29 @@ def _considerations_layout():
                 ],
             ),
             html.P(
-                "Alguns produtos vinham classificados num nível diferente do "
-                "real na planilha fonte. Esta página resume os ajustes manuais "
-                "feitos (ver fonte/change_category.xlsx) para que os números do "
-                "dashboard reflitam a hierarquia correta.",
+                "Some products came classified at a different level than "
+                "their real one in the source spreadsheet. This page "
+                "summarizes the manual adjustments made (see "
+                "fonte/change_category.xlsx) so the dashboard numbers "
+                "reflect the correct hierarchy.",
                 style={"color": "#444", "lineHeight": "1.6", "marginBottom": "24px"},
             ),
-            html.H4("Reclassificações"),
+            html.H4("Reclassifications"),
             html.P(
-                "O Cód. (posição na árvore) não muda — só o nível considerado "
-                "na quebra/gráfico. Um produto marcado como \"Ignorado\" (ex.: "
-                "Ekos-Cf, T. Egeo Choc-Cf) nunca aparece como categoria "
-                "própria em nenhuma quebra — seus filhos passam a aparecer "
-                "um nível acima, direto dentro do pai dele (ex.: família "
-                "Ekos, dentro de Natura).",
+                "The Code (tree position) doesn't change — only the level "
+                "considered in the breakdown/chart. A product marked "
+                "\"Ignored\" (e.g. Ekos-Cf, T. Egeo Choc-Cf) never appears as "
+                "its own category in any breakdown — its children appear one "
+                "level up instead, directly under its parent (e.g. the Ekos "
+                "family, under Natura).",
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
             ),
             _considerations_reclass_table(),
-            html.H4("Excluídos do ranking (top N)", style={"marginTop": "28px"}),
+            html.H4("Excluded from the ranking (top N)", style={"marginTop": "28px"}),
             html.P(
-                "Buckets residuais (nunca uma entidade de verdade daquele "
-                "nível) não concorrem por uma vaga no top 10/20/30 das "
-                "quebras por Marca, Submarca e Variante:",
+                "Residual buckets (never a real entity at that level) don't "
+                "compete for a spot in the top 10/20/30 of the Brand, "
+                "Sub-brand and SKU breakdowns:",
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
             ),
             html.Ul(
@@ -1495,19 +1497,20 @@ def _considerations_layout():
             ),
             html.H4("Body Splash", style={"marginTop": "28px"}),
             html.P(
-                "Classificação manual (ver fonte/body_splash.xlsx) de quais "
-                "submarcas são consideradas Body Splash — usada pelo filtro "
-                "IsBodySplash e pela quebra \"Body Splash\" (só confiável a "
-                "partir do nível Submarca).",
+                "Manual classification (see fonte/body_splash.xlsx) of which "
+                "sub-brands are considered Body Splash — used by the "
+                "IsBodySplash filter and the \"Body Splash\" breakdown (only "
+                "reliable from the Sub-brand level up).",
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5", "marginBottom": "8px"},
             ),
             _considerations_body_splash_table(),
-            html.H4("Selecionáveis em níveis extras", style={"marginTop": "28px"}),
+            html.H4("Selectable at extra levels", style={"marginTop": "28px"}),
             html.P(
-                "Marcas/fabricantes sem detalhamento na planilha (não têm "
-                "submarca/variante) que passaram a também aparecer nos "
-                "dropdowns de filtro nesses níveis mais fundos — e só até "
-                "eles, não aparecem em nenhum nível além do listado.",
+                "Brands/manufacturers without further detail in the "
+                "spreadsheet (no sub-brand/SKU) that also became selectable "
+                "in the filter dropdowns at those deeper levels — and only "
+                "up to that level, they don't appear at any level beyond "
+                "the one listed.",
                 style={"color": "#666", "fontSize": "13.5px", "lineHeight": "1.5"},
             ),
             _considerations_extend_list(),
@@ -1529,7 +1532,7 @@ app.layout = html.Div(
                 html.Img(src=app.get_asset_url("symrise_logo.png"), style={"height": "30px"}),
                 html.H2("Kantar Worldpanel - Dashboard", style={"margin": 0, "flex": "1"}),
                 html.Button(
-                    "Considerações",
+                    "Considerations",
                     id="considerations-open-btn",
                     n_clicks=0,
                     style={
@@ -1538,7 +1541,7 @@ app.layout = html.Div(
                     },
                 ),
                 html.A(
-                    "Sair",
+                    "Log out",
                     href=f"{_URL_BASE_PATHNAME.rstrip('/')}/logout",
                     style={
                         "fontSize": "13px", "padding": "6px 12px", "cursor": "pointer",
@@ -1552,26 +1555,26 @@ app.layout = html.Div(
             id="regiao-tabs",
             value=REGIAO_VIEWS[0],
             children=(
-                [dcc.Tab(label=r, value=r) for r in REGIAO_VIEWS]
+                [dcc.Tab(label=translate(r), value=r) for r in REGIAO_VIEWS]
                 + [dcc.Tab(label=REGIOES_TAB_KEY, value=REGIOES_TAB_KEY)]
             ),
         ),
         html.Div(
             style={"margin": "16px 0 12px", "maxWidth": "260px"},
             children=[
-                html.Label("Quebra por"),
+                html.Label("Breakdown by"),
                 dcc.Dropdown(
                     id="dimension-dropdown",
                     options=[
-                        {"label": "Segmento", "value": "segmento"},
-                        {"label": "Fabricante", "value": "fabricante"},
-                        {"label": "Marca", "value": "marca"},
-                        {"label": "Submarca", "value": "submarca"},
-                        {"label": "Variante", "value": "variante"},
-                        {"label": "Sub Variante", "value": "subvariante"},
+                        {"label": "Segment", "value": "segmento"},
+                        {"label": "Manufacturer", "value": "fabricante"},
+                        {"label": "Brand", "value": "marca"},
+                        {"label": "Sub-brand", "value": "submarca"},
+                        {"label": "SKU", "value": "variante"},
+                        {"label": "Sub-SKU", "value": "subvariante"},
                         {"label": "Body Splash", "value": BODY_SPLASH_BREAKDOWN_KEY},
-                        {"label": "Embalagem (Tipo)", "value": "embalagem_tipo"},
-                        {"label": "Embalagem (Conteúdo)", "value": "embalagem_conteudo"},
+                        {"label": "Packaging (Type)", "value": "embalagem_tipo"},
+                        {"label": "Packaging (Content)", "value": "embalagem_conteudo"},
                     ],
                     value="segmento",
                     clearable=False,
@@ -1586,7 +1589,7 @@ app.layout = html.Div(
                     style={"display": "flex", "alignItems": "center", "gap": "28px", "flexWrap": "wrap"},
                     children=[
                         html.Div([
-                            html.Label("Ranking (top N por indicador, base 2025)"),
+                            html.Label("Ranking (top N per indicator, 2025 base)"),
                             dcc.RadioItems(
                                 id="top-n-selector",
                                 options=[{"label": f"Top {n}", "value": n} for n in TOP_N_OPTIONS],
@@ -1601,7 +1604,7 @@ app.layout = html.Div(
                         # entra ou nao na pilha (ver build_selection)
                         dcc.Checklist(
                             id="fabricante-outros-checkbox",
-                            options=[{"label": 'Incluir bloco "Demais Fabricantes"', "value": "incluir"}],
+                            options=[{"label": 'Include "Other Manufacturers" block', "value": "incluir"}],
                             value=["incluir"],
                             style={"display": "none"},
                             inputStyle={"marginRight": "6px"},
@@ -1613,13 +1616,13 @@ app.layout = html.Div(
         html.Div(
             style={"display": "flex", "gap": "16px", "marginBottom": "24px", "flexWrap": "wrap"},
             children=[
-                html.Div([html.Label("Segmento"), _dropdown("segmento-filter", SEGMENTO_FILTER_OPTIONS, "Total")], style={"flex": "1", "minWidth": "160px"}),
-                html.Div([html.Label("Fabricante"), _dropdown("fabricante-filter", FABRICANTE_FILTER_OPTIONS, "Total")], style={"flex": "1", "minWidth": "160px"}),
-                html.Div([html.Label("Marca"), _dropdown("marca-filter", ["Total"] + ALL_MARCAS, "Total")], style={"flex": "1", "minWidth": "160px"}),
-                html.Div([html.Label("Submarca"), _dropdown("submarca-filter", ["Total"] + ALL_SUBMARCAS, "Total")], style={"flex": "1", "minWidth": "160px"}),
-                html.Div([html.Label("Variante"), _dropdown("variante-filter", ["Total"] + ALL_VARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
-                html.Div([html.Label("Sub Variante"), _dropdown("subvariante-filter", ["Total"] + ALL_SUBVARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
-                html.Div([html.Label("IsBodySplash"), _dropdown("body-splash-filter", BODY_SPLASH_OPTIONS, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("Segment"), _dropdown("segmento-filter", SEGMENTO_FILTER_OPTIONS, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("Manufacturer"), _dropdown("fabricante-filter", FABRICANTE_FILTER_OPTIONS, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("Brand"), _dropdown("marca-filter", ["Total"] + ALL_MARCAS, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("Sub-brand"), _dropdown("submarca-filter", ["Total"] + ALL_SUBMARCAS, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("SKU"), _dropdown("variante-filter", ["Total"] + ALL_VARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("Sub-SKU"), _dropdown("subvariante-filter", ["Total"] + ALL_SUBVARIANTES, "Total")], style={"flex": "1", "minWidth": "160px"}),
+                html.Div([html.Label("Is Body Splash"), _dropdown("body-splash-filter", BODY_SPLASH_OPTIONS, "Total")], style={"flex": "1", "minWidth": "160px"}),
             ],
         ),
         dcc.Tabs(
@@ -2046,13 +2049,13 @@ def _build_blocks(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, sub
             weight_key = cfg.get("weight_indicator")
             if cfg.get("average_mode") == "simple":
                 weighted_average = _simple_average(values, categories)
-                average_label = "Média simples"
+                average_label = "Simple average"
             elif weight_key:
                 weighted_average = _weighted_average(values, resolved_values.get(weight_key, {}), categories)
-                average_label = "Média ponderada"
+                average_label = "Weighted average"
             else:
                 weighted_average = None
-                average_label = "Média ponderada"
+                average_label = "Weighted average"
             fig = line_evolution_chart(
                 df=df, indicator=key, dimension=dim_col, categories=categories, filters=filters,
                 title=title, subtitle=subtitle, unit_label=cfg["unit_label"],
@@ -2227,7 +2230,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
     # price_unit_waterfall_chart) em vez de um "R$ milhoes" fixo
     valor_values, _, unit_label, decimals_override = _resolve_unit("valor_com_presentes", valor_values, categories)
     value_decimals = decimals_override if decimals_override is not None else INDICATORS["valor_com_presentes"]["value_decimals"]
-    subtitle = f"{INDICATORS['valor_com_presentes']['label']} em {unit_label}"
+    subtitle = f"{INDICATORS['valor_com_presentes']['label']} in {unit_label}"
 
     result = []
     # waterfall totalizador (soma de todas as categorias exibidas) antes
@@ -2248,7 +2251,7 @@ def _build_price_unit_rows(breakdown, regiao_view, segmento_f, fabricante_f, mar
 
     for cat in categories:
         fig = price_unit_waterfall_chart(
-            f"{title} > {cat}", unidades_values[cat], valor_values[cat],
+            f"{title} > {translate(cat)}", unidades_values[cat], valor_values[cat],
             unit_label=subtitle, value_decimals=value_decimals,
         )
         insight = generate_price_unit_insight(unidades_values[cat], valor_values[cat])
@@ -2305,7 +2308,7 @@ def _build_additions_bridge(indicator, breakdown, regiao_view, segmento_f, fabri
     deltas = {cat: values[cat][yr1] - values[cat][yr0] for cat in categories}
 
     if true_totals is not None:
-        residual_label = "Demais outras" if "Outras" in categories else "Outras"
+        residual_label = "Other (remaining)" if "Other" in categories else "Other"
         residual0 = totals[yr0] - sum(values[cat][yr0] for cat in categories)
         residual1 = totals[yr1] - sum(values[cat][yr1] for cat in categories)
         names.append(residual_label)
@@ -2348,7 +2351,7 @@ def update_waterfall(breakdown, regiao_view, segmento_f, fabricante_f, marca_f, 
         fabricante_outros="incluir" in (fabricante_outros_value or []),
     )
     if not rows:
-        return html.P("Sem dados para esta combinação de filtros.", style={"color": "#888", "fontSize": "12px"})
+        return html.P("No data for this filter combination.", style={"color": "#888", "fontSize": "12px"})
 
     return [
         html.Div(
