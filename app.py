@@ -827,8 +827,16 @@ def _scope_filters(fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
     return {"classificacao": "Total", "fabricante": "Total", "marca": "Total", "cod": "1"}
 
 
-def _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
+def _breadcrumb(regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
+    """Segmento entra no titulo sempre que for um valor real, forcado
+    pela quebra (Marca/Submarca/Variante/Sub Variante/Body Splash, ver
+    SEGMENT_REQUIRED_BREAKDOWNS) ou escolhido livremente (ex.:
+    Fabricante) - nos dois casos e informacao real do recorte, omitir
+    parece filtro nao aplicado (conversa com o usuario: "Feminino"
+    sumindo do titulo com quebra por Fabricante e por Body Splash)."""
     parts = [translate(regiao_view)]
+    if segmento_f and segmento_f != "Total":
+        parts.append(translate(segmento_f))
     for value in (fabricante_f, marca_f, submarca_f, variante_f, subvariante_f):
         if value and value != "Total":
             parts.append(translate(value))
@@ -965,7 +973,7 @@ def build_selection(
         categories, values = _embalagem_values(regiao_view, indicator_id, parent_cod)
         return categories, "rotulo", {}, values, f"{translate(regiao_view)} > {translate(label)}", None
 
-    crumb = _breadcrumb(regiao_view, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
+    crumb = _breadcrumb(regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, variante_f, subvariante_f)
 
     if breakdown == "segmento":
         if (
@@ -1858,7 +1866,7 @@ def update_segmento_and_bodysplash(breakdown, regiao_view, submarca_f, variante_
     return (
         is_regioes,
         not segmento_enabled,
-        [{"label": o, "value": o} for o in segmento_options],
+        [{"label": translate(o), "value": o} for o in segmento_options],
         segmento_value,
         not body_splash_enabled,
         body_splash_value,
