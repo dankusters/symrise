@@ -928,6 +928,13 @@ def unit_additions_bridge_chart(
     ate 30), o grafico NAO e responsivo/auto-fit como os outros - a
     largura cresce com o numero de blocos (o chamador deve envolver o
     `dcc.Graph` num container com `overflow-x: auto`, ver `app.py`)."""
+    # sem categorias o chamador manda `totals` vazio (ex.: um fabricante
+    # de marca unica, que nao tem filhos no nivel da quebra) - mesmo
+    # tratamento de `alluvial_stack_chart`, em vez de estourar no
+    # `totals[yr0]` logo abaixo. Largura fixa no piso de `width_px`.
+    if not totals:
+        return _empty_figure(title, "", (yr0, yr1), height, 1300)
+
     x_ticktext = [yr0[1:]]
     measures = ["absolute"]
     y_values = [totals[yr0]]
