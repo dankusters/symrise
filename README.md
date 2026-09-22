@@ -231,6 +231,43 @@ Abre em `http://127.0.0.1:8050/`.
   a mudança reflete em todo o app (dropdowns, gráficos, tabelas,
   breadcrumbs, PPTX) sem mexer em outro arquivo.
 
+## Fluxo de análise (deck em sequência)
+
+Pra montar uma análise narrativa — uma sequência de recortes que conta
+uma história, em vez de um gráfico solto — o ciclo é:
+
+1. **Descrever a sequência** em `STEPS`, no topo de `sequencia.py`. Cada
+   passo é a mesma combinação de filtros que você montaria clicando no
+   dashboard (região, quebra, segmento, top N, ...).
+2. **Gerar**: `uv run python sequencia.py -o analise.pptx`. Sai um deck
+   só, na ordem dos passos, com os highlights automáticos de sempre e um
+   manifesto slide→passo impresso no fim.
+3. **Reescrever os textos**: abrir no PowerPoint, decidir o que cada
+   slide deveria dizer, e aplicar com
+   `uv run python highlights.py analise.pptx -a textos.txt`. Só as caixas
+   de Highlights mudam — gráficos, tabelas, logo e rodapé ficam intactos,
+   então não é preciso regerar nada.
+
+Atualizou a planilha? Rodar o passo 2 de novo reconstrói o deck inteiro
+com os números novos, sem refazer cliques. Os textos do passo 3 precisam
+ser reaplicados (ou revistos, já que os números mudaram).
+
+### Restrição que mais atrapalha narrativa
+
+**Quebra por Marca, Submarca, Variante, Sub Variante ou Body Splash
+exige um Segmento real** (Feminino / Masculino / Infantil / Unisex) —
+não funciona sobre `Segmento="Total"`. Não é limitação da interface: a
+planilha não detalha esses níveis na linha agregada (Submarca/Variante/
+Sub Variante não têm nenhuma linha em "Total"; Marca tem algumas, mas
+misturadas com totais de fabricante reaproveitados pela descida
+genérica, o que é pior que não ter).
+
+Na prática, uma narrativa do tipo "peso da região → dentro dela, Body
+Splash → marcas → submarcas" **não fecha em cima do total da região**.
+As opções são escolher um segmento como fio condutor, ou repetir o
+bloco por segmento. `sequencia.py` recusa o passo inválido explicando o
+motivo, em vez de gerar um número errado com cara de certo.
+
 ## Deploy / Produção
 
 Em produção em `https://gettally.com.br/symrise/dashboard/` (VPS
@@ -300,6 +337,9 @@ Ubuntu), atrás de login próprio (não é o pop-up nativo do navegador).
   contraste de texto (sobre barra ou como linha/rótulo) calculado
   automaticamente pra qualquer cor da paleta, sem depender de uma
   coluna extra cadastrada cor a cor
+- Geração de deck em sequência (`sequencia.py`) + reescrita só dos
+  textos de Highlights num deck pronto (`highlights.py`) — ver "Fluxo de
+  análise" acima
 - Dashboard traduzido de português para inglês (ver `translations.py`)
   — nomes próprios de Fabricante/Marca/Sub Marca/Variante/Sub Variante
   continuam como vêm da planilha, todo o resto (interface, categorias
