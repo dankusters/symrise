@@ -181,6 +181,39 @@ Abre em `http://127.0.0.1:8050/`.
   Condensed; tabela com "scale to fit" (encolhe fonte/margem pra caber
   num único slide, com piso legível — o que não couber nem assim
   transborda pra slide de continuação).
+  `new_presentation()`/`add_chart_slides()` são a versão reusável desse
+  mesmo layout: em vez de um deck por gráfico (o que os botões da tela
+  baixam, via `build_pptx`), deixam empilhar vários blocos num deck só —
+  é o que `sequencia.py` usa. Toda caixa de Highlights sai com o nome
+  fixo `symrise-highlight`, que é o que permite reescrever só os textos
+  depois (ver `highlights.py`).
+
+- **`sequencia.py`** — monta UM deck com uma sequência de recortes do
+  dashboard, na ordem de uma narrativa de análise (ex.: peso das regiões
+  no Valor com Presente → dentro de N+NE, Body Splash vs. resto → marcas
+  → submarcas), em vez de baixar um `.pptx` por bloco pela tela e juntar
+  na mão. A sequência é a lista `STEPS` no topo do arquivo — cada passo é
+  a mesma combinação de filtros que você montaria clicando. Chama
+  `app._build_blocks`, exatamente o que a tela chama, então os números
+  batem por construção. **Valida cada passo antes de gerar**: a UI impede
+  combinações inválidas (quebra por Marca/Submarca/Variante/Sub Variante/
+  Body Splash exige Segmento real, o filtro IsBodySplash só vale em certas
+  quebras etc.), e um script passaria por cima dessas travas produzindo
+  número errado com cara de certo — daí ele recusar o passo com a razão
+  em vez de gerar. Imprime um manifesto slide→passo no fim.
+  Rodar: `uv run python sequencia.py -o analise.pptx`.
+
+- **`highlights.py`** — lê e reescreve SÓ os textos de Highlights de um
+  `.pptx` já gerado; gráficos, tabelas, logo e rodapé ficam intactos.
+  Pensado pro ciclo da análise: gera o deck com os highlights automáticos,
+  abre no PowerPoint, decide o que cada slide deveria dizer, aplica os
+  textos novos sem regerar nada. Sem argumentos, imprime o que há hoje
+  em cada slide; com `-a textos.txt`, aplica (formato: um `## <nº do
+  slide>` por bloco, só os slides que mudam; linha em branco separa
+  parágrafos). Preserva a formatação atribuindo `run.text` — atribuir
+  `text_frame.text` colapsaria o parágrafo num run sem estilo, perdendo
+  fonte/corpo/cor. Funciona também nos decks baixados pelos botões da
+  tela. Rodar: `uv run python highlights.py analise.pptx -a textos.txt`.
 
 - **`translations.py`** — dashboard é em inglês (migrado de português em
   2026-09); `translate(texto)` é um dicionário PT→EN aplicado em tempo

@@ -37,6 +37,12 @@ _GAP = Inches(0.3)
 # (mais estreita, cabe melhor nas celulas apertadas da tabela)
 _FONT_NAME = "Roboto Condensed"
 
+# nome fixo dado a caixa de texto de Highlights em todo slide que tem
+# uma. E o que permite reescrever SO os textos de um .pptx ja gerado
+# (ver `highlights.py`) sem depender de posicao/ordem das shapes, que
+# mudam conforme o slide tem tabela, legenda, slide de continuacao etc.
+_HIGHLIGHT_SHAPE_NAME = "symrise-highlight"
+
 # logo Symrise + titulo, canto superior esquerdo de todo slide - mesmo
 # arquivo (recortado, sem a folga em branco a direita do SVG original
 # em assets/SY1.DE_BIG.svg) e mesmo texto ao lado usados no cabecalho
@@ -327,6 +333,7 @@ def _add_highlight_textbox(slide, top, height, highlight_text):
     embaixo) do bloco na tela (`app._chart_block`)."""
     text_width = _SLIDE_WIDTH - 2 * _MARGIN
     txbox = slide.shapes.add_textbox(_MARGIN, top, text_width, height)
+    txbox.name = _HIGHLIGHT_SHAPE_NAME
     tf = txbox.text_frame
     tf.word_wrap = True
 
@@ -431,7 +438,19 @@ def _add_table_slide(prs, header, rows_data, value_decimals, show_share):
     return slide, overflow_rows
 
 
-def build_pptx(
+def new_presentation() -> Presentation:
+    """Deck vazio no tamanho padrao (16:9) usado por todos os builders
+    daqui. Exposto pra `sequencia.py` poder abrir UM deck e ir
+    empilhando slides de varias combinacoes de filtro nele, em vez de
+    um arquivo por grafico como fazem os botoes de exportar da tela."""
+    prs = Presentation()
+    prs.slide_width = _SLIDE_WIDTH
+    prs.slide_height = _SLIDE_HEIGHT
+    return prs
+
+
+def add_chart_slides(
+    prs: Presentation,
     fig: go.Figure,
     categories: list[str],
     values: dict[str, dict[str, float]],
@@ -439,11 +458,12 @@ def build_pptx(
     value_decimals: int,
     totals_override: dict[str, float] | None = None,
     highlight_text: str | None = None,
-) -> bytes:
-    prs = Presentation()
-    prs.slide_width = _SLIDE_WIDTH
-    prs.slide_height = _SLIDE_HEIGHT
-
+) -> None:
+    """Acrescenta a `prs` o slide combo (grafico + tabela + highlight) de
+    UM bloco de indicador, mais os slides de continuacao que a tabela
+    exigir. Corpo extraido de `build_pptx` sem alteracao de layout - e o
+    mesmo codigo que os botoes da tela usam, entao um deck montado em
+    sequencia sai identico a baixar bloco por bloco e juntar na mao."""
     # renderiza na proporcao ORIGINAL do grafico (760 - largura padrao dos
     # dois construtores de grafico em charts.py, sempre usada aqui - x a
     # altura de verdade, preservada em fig.layout.height mesmo depois do
@@ -487,6 +507,20 @@ def build_pptx(
     while overflow_rows:
         _, overflow_rows = _add_table_slide(prs, header, overflow_rows, value_decimals, additive)
 
+
+def build_pptx(
+    fig: go.Figure,
+    categories: list[str],
+    values: dict[str, dict[str, float]],
+    additive: bool,
+    value_decimals: int,
+    totals_override: dict[str, float] | None = None,
+    highlight_text: str | None = None,
+) -> bytes:
+    """Deck de um bloco so - o que os botoes "Exportar PowerPoint" da
+    tela baixam."""
+    prs = new_presentation()
+    add_chart_slides(prs, fig, categories, values, additive, value_decimals, totals_override, highlight_text)
     buf = BytesIO()
     prs.save(buf)
     return buf.getvalue()
@@ -519,6 +553,7 @@ def build_price_unit_pptx(charts: list[tuple[go.Figure, str]]) -> bytes:
         slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
 
         txbox = slide.shapes.add_textbox(text_left, _CONTENT_TOP, text_width, area_height)
+        txbox.name = _HIGHLIGHT_SHAPE_NAME
         tf = txbox.text_frame
         tf.word_wrap = True
 
