@@ -564,52 +564,58 @@ def build_pptx(
     return buf.getvalue()
 
 
-def build_price_unit_pptx(charts: list[tuple[go.Figure, str]]) -> bytes:
-    """Exportacao da aba "Price/Unit": um slide por categoria, grafico
-    (waterfall) a esquerda e o texto de Highlights a direita - mesmo
+def add_price_unit_slide(prs: Presentation, fig: go.Figure, highlight_text: str) -> None:
+    """Acrescenta a `prs` UM slide da aba "Price/Unit" (uma categoria):
+    grafico (waterfall) a esquerda, texto de Highlights a direita - mesmo
     layout/proporcao de `_add_combo_slide`, so com um texto simples no
-    lugar da tabela (essa aba nao tem tabela de variacao). `charts`: uma
+    lugar da tabela (essa aba nao tem tabela de variacao). Exposto pra
+    `sequencia.py` poder empilhar categorias/passos variados num deck so
+    (mesmo motivo de `add_chart_slides` existir separado de `build_pptx`)."""
+    chart_area_width, area_height = _chart_area_size()
+    text_left = _MARGIN + chart_area_width + _GAP
+    text_width = _SLIDE_WIDTH - _MARGIN - text_left
+
+    img_w_px = 760
+    img_h_px = int(fig.layout.height or 460)
+    img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
+
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_logo(slide)
+    _add_footer(slide)
+    left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _CONTENT_TOP, chart_area_width, area_height)
+    slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
+
+    txbox = slide.shapes.add_textbox(text_left, _CONTENT_TOP, text_width, area_height)
+    txbox.name = _HIGHLIGHT_SHAPE_NAME
+    tf = txbox.text_frame
+    tf.word_wrap = True
+
+    heading_run = tf.paragraphs[0].add_run()
+    heading_run.text = "Highlights"
+    heading_run.font.name = _FONT_NAME
+    heading_run.font.bold = True
+    heading_run.font.size = Pt(16)
+    heading_run.font.color.rgb = _HEADER_RGB
+
+    body_p = tf.add_paragraph()
+    body_p.space_before = Pt(8)
+    body_run = body_p.add_run()
+    body_run.text = highlight_text
+    body_run.font.name = _FONT_NAME
+    body_run.font.size = Pt(13)
+    body_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+
+def build_price_unit_pptx(charts: list[tuple[go.Figure, str]]) -> bytes:
+    """Exportacao da aba "Price/Unit" (botao da tela): um deck novo com um
+    slide por categoria (ver `add_price_unit_slide`). `charts`: uma
     entrada (fig, texto_highlight) por categoria, na mesma ordem exibida
     na tela."""
     prs = Presentation()
     prs.slide_width = _SLIDE_WIDTH
     prs.slide_height = _SLIDE_HEIGHT
-
-    chart_area_width, area_height = _chart_area_size()
-    text_left = _MARGIN + chart_area_width + _GAP
-    text_width = _SLIDE_WIDTH - _MARGIN - text_left
-
     for fig, highlight_text in charts:
-        img_w_px = 760
-        img_h_px = int(fig.layout.height or 460)
-        img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
-
-        slide = prs.slides.add_slide(prs.slide_layouts[6])
-        _add_logo(slide)
-        _add_footer(slide)
-        left, top, width, height = _picture_box(img_w_px, img_h_px, _MARGIN, _CONTENT_TOP, chart_area_width, area_height)
-        slide.shapes.add_picture(BytesIO(img_bytes), left, top, width=width, height=height)
-
-        txbox = slide.shapes.add_textbox(text_left, _CONTENT_TOP, text_width, area_height)
-        txbox.name = _HIGHLIGHT_SHAPE_NAME
-        tf = txbox.text_frame
-        tf.word_wrap = True
-
-        heading_run = tf.paragraphs[0].add_run()
-        heading_run.text = "Highlights"
-        heading_run.font.name = _FONT_NAME
-        heading_run.font.bold = True
-        heading_run.font.size = Pt(16)
-        heading_run.font.color.rgb = _HEADER_RGB
-
-        body_p = tf.add_paragraph()
-        body_p.space_before = Pt(8)
-        body_run = body_p.add_run()
-        body_run.text = highlight_text
-        body_run.font.name = _FONT_NAME
-        body_run.font.size = Pt(13)
-        body_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-
+        add_price_unit_slide(prs, fig, highlight_text)
     buf = BytesIO()
     prs.save(buf)
     return buf.getvalue()
@@ -649,7 +655,8 @@ def _fill_additions_table(table, header, rows_data, value_decimals, header_size,
         delta_run.font.size = body_size
 
 
-def build_additions_pptx(
+def add_additions_slide(
+    prs: Presentation,
     fig: go.Figure,
     names: list[str],
     deltas: dict[str, float],
@@ -657,23 +664,20 @@ def build_additions_pptx(
     year0: str,
     year1: str,
     highlight_text: str | None = None,
-) -> bytes:
-    """Exportacao de uma aba "Adicoes de X" (ver app.ADDITIONS_TABS): 1
-    slide, grafico (bridge/waterfall) a esquerda + tabela simples
-    (Categoria + UMA coluna com a variacao {year0}->{year1}, mesmos
-    numeros de `app._additions_table`) a direita + Highlights embaixo -
-    mesmo layout de `build_pptx`, so com uma tabela mais simples (sem %
-    de participacao, que a tabela da tela tambem nao tem pra essa aba).
-    O grafico pode crescer bem largo na tela (ate 30+ categorias, sem
-    responsividade - ver charts.unit_additions_bridge_chart), mas aqui
-    e sempre renderizado nos mesmos 760px de largura dos demais
-    graficos exportados (mesma logica de `build_pptx`/
-    `build_price_unit_pptx`) - senao a proporcao do PNG nao bateria com
-    as margens calibradas do grafico."""
-    prs = Presentation()
-    prs.slide_width = _SLIDE_WIDTH
-    prs.slide_height = _SLIDE_HEIGHT
-
+) -> None:
+    """Acrescenta a `prs` o(s) slide(s) de UMA aba "Adicoes de X" (ver
+    app.ADDITIONS_TABS): grafico (bridge/waterfall) a esquerda + tabela
+    simples (Categoria + UMA coluna com a variacao {year0}->{year1},
+    mesmos numeros de `app._additions_table`) a direita + Highlights
+    embaixo - mesmo layout de `add_chart_slides`, so com uma tabela mais
+    simples (sem % de participacao, que a tabela da tela tambem nao tem
+    pra essa aba). O grafico pode crescer bem largo na tela (ate 30+
+    categorias, sem responsividade - ver charts.unit_additions_bridge_chart),
+    mas aqui e sempre renderizado nos mesmos 760px de largura dos demais
+    graficos exportados - senao a proporcao do PNG nao bateria com as
+    margens calibradas do grafico. Exposto pra `sequencia.py` poder
+    empilhar categorias/passos variados num deck so (mesmo motivo de
+    `add_chart_slides` existir separado de `build_pptx`)."""
     img_w_px = 760
     img_h_px = int(fig.layout.height or 520)
     img_bytes = fig.to_image(format="png", width=img_w_px, height=img_h_px, scale=3)
@@ -735,6 +739,22 @@ def build_additions_pptx(
             table.columns[i].width = col_width
         _fill_additions_table(table, header, shown_rows, value_decimals, Pt(header_font), Pt(body_font))
 
+
+def build_additions_pptx(
+    fig: go.Figure,
+    names: list[str],
+    deltas: dict[str, float],
+    value_decimals: int,
+    year0: str,
+    year1: str,
+    highlight_text: str | None = None,
+) -> bytes:
+    """Exportacao de uma aba "Adicoes de X" (botao da tela): um deck novo
+    com o(s) slide(s) dessa aba (ver `add_additions_slide`)."""
+    prs = Presentation()
+    prs.slide_width = _SLIDE_WIDTH
+    prs.slide_height = _SLIDE_HEIGHT
+    add_additions_slide(prs, fig, names, deltas, value_decimals, year0, year1, highlight_text)
     buf = BytesIO()
     prs.save(buf)
     return buf.getvalue()
