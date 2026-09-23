@@ -21,6 +21,8 @@ import plotly.graph_objects as go
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.oxml import parse_xml
+from pptx.oxml.ns import nsdecls, qn
 from pptx.util import Emu, Inches, Pt
 
 from charts import YEARS_DEFAULT, compute_variations
@@ -217,24 +219,60 @@ def _fill_variation_cell(cell, pct, share_pp, nominal, share_value, value_decima
 
 
 _BODY_FILL_RGB = RGBColor(0xFF, 0xFF, 0xFF)
+_ALT_FILL_RGB = RGBColor(0xF5, 0xF5, 0xF5)
+_ROW_BORDER_HEX = "DDDDDD"  # mesmo tom do #eee usado na borda das linhas da tabela na tela (app._TABLE_CELL_STYLE)
+_ROW_BORDER_WIDTH_EMU = 6350  # 0.5pt
+
+
+def _set_cell_row_borders(cell, color_hex, width_emu):
+    """Seta borda superior + inferior (`a:lnT`/`a:lnB`) na celula via XML
+    direto - a API publica do python-pptx nao expõe borda de celula.
+    Precisa ser chamado ANTES de `cell.fill.*` na mesma celula: a ordem
+    dos filhos de `a:tcPr` e fixa no schema (lnL, lnR, lnT, lnB, ...,
+    fill por ultimo) - se a borda entrar depois do fill ja setado, o
+    proprio python-pptx encaixa esse fill ANTES dela (`insert_element_before`
+    varre os filhos existentes ate achar um sucessor conhecido - `lnT`/
+    `lnB` nao sao filhos que ele reconhece, entao pula por cima e insere
+    o fill na frente), resultando em XML fora de ordem."""
+    tcPr = cell._tc.get_or_add_tcPr()
+    ln_xml = (
+        '<a:{tag} {nsdecls} w="{w}" cap="flat" cmpd="sng" algn="ctr">'
+        '<a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
+        '<a:prstDash val="solid"/>'
+        "</a:{tag}>"
+    )
+    for edge in ("lnT", "lnB"):
+        existing = tcPr.find(qn(f"a:{edge}"))
+        if existing is not None:
+            tcPr.remove(existing)
+        tcPr.append(parse_xml(ln_xml.format(tag=edge, nsdecls=nsdecls("a"), w=width_emu, color=color_hex)))
 
 
 def _style_table_plain(table, n_rows, n_cols, margin_pt=2.0):
-    """Remove o banding/tema colorido padrao do PowerPoint pra tabela (fundo
-    branco solido, cabecalho incluso) - o estilo padrao (faixas azuis
-    alternadas, cabecalho colorido) nao existe na tabela HTML da tela,
-    onde o cabecalho tambem e branco (so uma borda embaixo, sem fundo -
-    ver `app._TABLE_CELL_STYLE`). `margin_pt` (topo/base de cada
-    celula) encolhe junto com a fonte no scale-to-fit (ver `_fit_table`)
-    - a margem esquerda/direita fica fixa, so a vertical conta pra
-    altura da linha."""
+    """Remove o banding/tema colorido padrao do PowerPoint pra tabela
+    (cabecalho incluso) e aplica fundo cinza claro alternado + borda
+    superior/inferior cinza claro por linha de dados - cada categoria
+    (Marca/Submarca/...) ocupa uma linha so, mas com 2 paragrafos por
+    celula quando `show_share` (% + participacao, ver
+    `_fill_variation_cell`), o que confundia visualmente onde acabava
+    uma categoria e comecava a proxima (ver conversa com o usuario).
+    Cabecalho fica sempre branco, sem borda extra (mesmo visual de
+    antes). `margin_pt` (topo/base de cada celula) encolhe junto com a
+    fonte no scale-to-fit (ver `_fit_table`) - a margem esquerda/direita
+    fica fixa, so a vertical conta pra altura da linha."""
     table.first_row = False
     table.horz_banding = False
     for i in range(n_rows):
+        is_data_row = i > 0
+        # alternando a partir da 2a linha de dados (i=2,4,...) - a 1a
+        # fica branca, colada no cabecalho tambem branco
+        row_fill = _ALT_FILL_RGB if is_data_row and i % 2 == 0 else _BODY_FILL_RGB
         for j in range(n_cols):
             cell = table.cell(i, j)
+            if is_data_row:
+                _set_cell_row_borders(cell, _ROW_BORDER_HEX, _ROW_BORDER_WIDTH_EMU)
             cell.fill.solid()
-            cell.fill.fore_color.rgb = _BODY_FILL_RGB
+            cell.fill.fore_color.rgb = row_fill
             cell.margin_left = Pt(4)
             cell.margin_right = Pt(4)
             cell.margin_top = Pt(margin_pt)
