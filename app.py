@@ -654,6 +654,22 @@ def _cod_own_values(indicator, cod, base_filters):
     return {yr: float(row[f"{indicator}_{yr}"]) * scale for yr in YEARS_DEFAULT}
 
 
+def _true_totals(indicator, cod, base_filters, body_splash_f="Total"):
+    """Como `_cod_own_values`, mas correto quando o filtro IsBodySplash
+    esta ativo (body_splash_f != "Total"): a propria linha de `cod` soma
+    Body Splash + Non-Body Splash junto (a classificacao so existe nas
+    folhas, ver `_body_splash_leaves`), entao usar `_cod_own_values` ali
+    devolveria o total dos DOIS baldes, nao so do filtrado - reaproveita
+    `_body_splash_values` (desce ate a folha de verdade, cobre 100% do
+    escopo) pra pegar so o balde certo."""
+    if body_splash_f == "Total":
+        return _cod_own_values(indicator, cod, base_filters)
+    if not cod:
+        return None
+    bucket = _BODY_SPLASH_LABEL if body_splash_f == "Sim" else _NOT_BODY_SPLASH_LABEL
+    return _body_splash_values(indicator, base_filters, cod)[bucket]
+
+
 def _regiao_root_values(
     indicator, segmento_f="Total", fabricante_f="Total", marca_f="Total", submarca_f="Total",
     variante_f="Total", subvariante_f="Total", body_splash_f="Total",
@@ -841,6 +857,19 @@ def _breadcrumb(regiao_view, segmento_f, fabricante_f, marca_f, submarca_f, vari
         if value and value != "Total":
             parts.append(translate(value))
     return " > ".join(parts)
+
+
+def _body_splash_crumb_suffix(body_splash_f):
+    """" > Body Splash"/" > Non-Body Splash" pro titulo quando o filtro
+    IsBodySplash esta ativo (so vale nas quebras de BODY_SPLASH_BREAKDOWNS
+    - ver update_filters_disabled) - mesmo motivo do Segmento em
+    `_breadcrumb`: um filtro real que nao aparece no titulo parece filtro
+    nao aplicado."""
+    if body_splash_f == "Sim":
+        return f" > {_BODY_SPLASH_LABEL}"
+    if body_splash_f == "Não":
+        return f" > {_NOT_BODY_SPLASH_LABEL}"
+    return ""
 
 
 def _segmento_root_values(regiao_view, indicator):
@@ -1060,8 +1089,9 @@ def build_selection(
         categories, values = _apply_ranking(
             values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
         )
-        true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-        return categories, "rotulo", base_filters, values, f"{crumb} > Sub-brands (top {top_n})", true_totals
+        true_totals = _true_totals(indicator_id, start_cod, base_filters, body_splash_f)
+        title = f"{crumb} > Sub-brands (top {top_n}){_body_splash_crumb_suffix(body_splash_f)}"
+        return categories, "rotulo", base_filters, values, title, true_totals
 
     if breakdown == "variante":
         if submarca_f and submarca_f != "Total":
@@ -1080,8 +1110,9 @@ def build_selection(
         categories, values = _apply_ranking(
             values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
         )
-        true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-        return categories, "rotulo", base_filters, values, f"{crumb} > SKUs (top {top_n})", true_totals
+        true_totals = _true_totals(indicator_id, start_cod, base_filters, body_splash_f)
+        title = f"{crumb} > SKUs (top {top_n}){_body_splash_crumb_suffix(body_splash_f)}"
+        return categories, "rotulo", base_filters, values, title, true_totals
 
     # breakdown == "subvariante" - so existe pra 2 marcas na planilha
     # (Natura, Boticario); as demais retornam categorias vazias (ver
@@ -1104,8 +1135,9 @@ def build_selection(
     categories, values = _apply_ranking(
         values_all, top_n, add_other=False, categories_override=categories_override, weight_all=weight_all,
     )
-    true_totals = _cod_own_values(indicator_id, start_cod, base_filters)
-    return categories, "rotulo", base_filters, values, f"{crumb} > Sub-SKUs (top {top_n})", true_totals
+    true_totals = _true_totals(indicator_id, start_cod, base_filters, body_splash_f)
+    title = f"{crumb} > Sub-SKUs (top {top_n}){_body_splash_crumb_suffix(body_splash_f)}"
+    return categories, "rotulo", base_filters, values, title, true_totals
 
 
 def _dropdown(id_, options, value, disabled=False):
